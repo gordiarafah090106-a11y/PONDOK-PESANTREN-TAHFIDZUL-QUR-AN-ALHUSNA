@@ -1,0 +1,6 @@
+{
+  "name": "Pondok Pesantren Tahfidzul Qur'an Alhusna - SIM Nilai Ujian",
+  "description": "Sistem Informasi Manajemen Nilai Ujian Santri Pondok Pesantren Tahfidzul Qur'an Alhusna dengan rekapitulasi guru, ekspor Excel, dan manajemen akademik per semester.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
