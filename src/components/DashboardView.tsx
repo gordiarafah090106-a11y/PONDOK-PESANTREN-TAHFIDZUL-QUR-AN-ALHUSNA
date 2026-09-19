@@ -97,7 +97,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2 leading-tight">
-              Selamat Datang di Portal Nilai {profile.nama}
+              {profile.nama}
             </h2>
 
             <p className="text-emerald-100/90 text-sm leading-relaxed mb-4">
