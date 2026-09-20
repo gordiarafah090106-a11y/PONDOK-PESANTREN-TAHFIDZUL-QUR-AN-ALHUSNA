@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   AcademicTerm,
   JadwalUjianItem,
@@ -23,10 +23,14 @@ import {
   Users,
   Search,
   Check,
+  FileText,
+  X,
 } from 'lucide-react';
 import {
   downloadKelasTemplateExcel,
   parseKelasExcel,
+  downloadSantriTemplateExcel,
+  parseSantriExcel,
 } from '../utils/excelExport';
 
 interface LembagaViewProps {
@@ -40,6 +44,8 @@ interface LembagaViewProps {
   allJadwal: JadwalUjianItem[];
   onUpdateJadwal: (updated: JadwalUjianItem[]) => void;
   currentRole: RoleType;
+  activeSubTab?: string;
+  onSelectSubTab?: (tab: 'kelas' | 'mapel' | 'jadwal') => void;
 }
 
 export const LembagaView: React.FC<LembagaViewProps> = ({
@@ -53,9 +59,15 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
   allJadwal,
   onUpdateJadwal,
   currentRole,
+  activeSubTab: propSubTab,
+  onSelectSubTab,
 }) => {
-  // Tabs: only kelas, mapel, jadwal (the old upload santri per kelas tab has been removed per user request)
-  const [activeTab, setActiveTab] = useState<'kelas' | 'mapel' | 'jadwal'>('kelas');
+  const [internalTab, setInternalTab] = useState<'kelas' | 'mapel' | 'jadwal'>('kelas');
+  const activeTab = (propSubTab as 'kelas' | 'mapel' | 'jadwal') || internalTab;
+  const setActiveTab = (tab: 'kelas' | 'mapel' | 'jadwal') => {
+    setInternalTab(tab);
+    if (onSelectSubTab) onSelectSubTab(tab);
+  };
   const isAdmin = currentRole === 'admin';
 
   // --- Kelas State ---
@@ -74,7 +86,7 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
   const [parsedKelasList, setParsedKelasList] = useState<Omit<Kelas, 'id'>[]>([]);
   const [parseKelasStatus, setParseKelasStatus] = useState<{ success?: boolean; message?: string } | null>(null);
 
-  // Santri List Drawer / Modal per Class
+  // Santri Drawer per Class State
   const [viewSantriClass, setViewSantriClass] = useState<Kelas | null>(null);
   const [santriSearch, setSantriSearch] = useState('');
   const [manualSantriModal, setManualSantriModal] = useState(false);
@@ -86,6 +98,10 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
     kamar: 'Asrama Santri',
   });
 
+  // Santri Excel Upload inside Class Drawer
+  const santriFileInputRef = useRef<HTMLInputElement>(null);
+  const [santriUploadNotice, setSantriUploadNotice] = useState<{ success?: boolean; message?: string } | null>(null);
+
   // --- Mapel State ---
   const [mapelModal, setMapelModal] = useState(false);
   const [editingMapel, setEditingMapel] = useState<MataPelajaran | null>(null);
@@ -96,14 +112,15 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
     kkm: 75,
   });
 
-  // --- Jadwal Ujian State ---
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  // --- Jadwal Ujian State (PDF & Image Support) ---
+  const [previewDocUrl, setPreviewDocUrl] = useState<{ url: string; title: string; isPdf: boolean } | null>(null);
   const [jadwalModal, setJadwalModal] = useState(false);
   const [jadwalForm, setJadwalForm] = useState({
     judul: '',
     tanggalUjian: '',
     keterangan: '',
-    imageUrl: '',
+    fileUrl: '',
+    fileType: 'image' as 'image' | 'pdf',
   });
 
   // Handle Excel File for Kelas
@@ -132,17 +149,37 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
     }));
 
     onUpdateKelas([...allKelas, ...newClasses]);
-    alert(`Berhasil mengimpor ${newClasses.length} kelas baru ke sistem!`);
+    window.alert(`Alhamdulillah, berhasil mengimpor ${newClasses.length} kelas baru!`);
     setKelasModal(false);
     setKelasExcelFile(null);
     setParsedKelasList([]);
     setParseKelasStatus(null);
   };
 
+  // Save manual class
+  const handleSaveKelas = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!kelasForm.nama.trim()) return;
+
+    if (editingKelas) {
+      const updated = allKelas.map((k) =>
+        k.id === editingKelas.id ? { ...k, ...kelasForm } : k
+      );
+      onUpdateKelas(updated);
+    } else {
+      const newKelas: Kelas = {
+        id: `kls-${Date.now()}`,
+        ...kelasForm,
+      };
+      onUpdateKelas([...allKelas, newKelas]);
+    }
+    setKelasModal(false);
+  };
+
   // Add Santri manually to a class
   const handleSaveManualSantri = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!viewSantriClass) return;
+    if (!viewSantriClass || !manualSantriForm.nama.trim()) return;
 
     const newSantri: Santri = {
       id: `snt-${Date.now()}`,
@@ -154,6 +191,7 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
       kamar: manualSantriForm.kamar,
       status: 'Aktif',
     };
+
     onUpdateSantri([...allSantri, newSantri]);
     setManualSantriModal(false);
     setManualSantriForm({
@@ -165,20 +203,86 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
     });
   };
 
-  const handleDeleteSantri = (id: string) => {
-    if (confirm('Hapus santri ini dari daftar kelas?')) {
-      onUpdateSantri(allSantri.filter((s) => s.id !== id));
+  // Handle Excel Upload for Student Names in this Class
+  const handleSantriExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !viewSantriClass) return;
+
+    setSantriUploadNotice(null);
+    try {
+      const result = await parseSantriExcel(file, viewSantriClass.id);
+      if (result.success && result.data.length > 0) {
+        const newSantriList: Santri[] = result.data.map((item, idx) => ({
+          ...item,
+          id: `snt-${Date.now()}-${idx}`,
+          kelasId: viewSantriClass.id,
+        }));
+
+        // Merge without duplicating same NIS
+        const filteredExisting = allSantri.filter(
+          (s) => !newSantriList.some((n) => n.nis && s.nis && n.nis === s.nis)
+        );
+
+        onUpdateSantri([...filteredExisting, ...newSantriList]);
+        setSantriUploadNotice({
+          success: true,
+          message: `Alhamdulillah! Berhasil menambahkan ${newSantriList.length} santri ke kelas ${viewSantriClass.nama}.`,
+        });
+      } else {
+        setSantriUploadNotice({
+          success: false,
+          message: result.message || 'Gagal membaca format data santri pada file Excel.',
+        });
+      }
+    } catch (err: any) {
+      setSantriUploadNotice({
+        success: false,
+        message: `Terjadi kesalahan saat memproses file: ${err?.message || 'Format tidak valid'}`,
+      });
+    } finally {
+      if (santriFileInputRef.current) santriFileInputRef.current.value = '';
     }
   };
 
-  // Jadwal Ujian Upload (converts image file to data URL)
-  const handleJadwalImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDeleteSantri = (santriId: string) => {
+    if (window.confirm('Hapus santri ini dari kelas?')) {
+      onUpdateSantri(allSantri.filter((s) => s.id !== santriId));
+    }
+  };
+
+  // --- Mapel Handlers ---
+  const handleSaveMapel = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mapelForm.nama.trim()) return;
+
+    if (editingMapel) {
+      const updated = allMapel.map((m) =>
+        m.id === editingMapel.id ? { ...m, ...mapelForm } : m
+      );
+      onUpdateMapel(updated);
+    } else {
+      const newMapel: MataPelajaran = {
+        id: `mp-${Date.now()}`,
+        ...mapelForm,
+      };
+      onUpdateMapel([...allMapel, newMapel]);
+    }
+    setMapelModal(false);
+  };
+
+  // --- Jadwal Ujian (PDF / Image) Handlers ---
+  const handleJadwalFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const isPdf = file.type === 'application/pdf' || file.name.endsWith('.pdf');
       const reader = new FileReader();
       reader.onload = (event) => {
         const result = event.target?.result as string;
-        setJadwalForm((prev) => ({ ...prev, imageUrl: result }));
+        setJadwalForm({
+          ...jadwalForm,
+          fileUrl: result,
+          fileType: isPdf ? 'pdf' : 'image',
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -186,124 +290,101 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
 
   const handleSaveJadwal = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!jadwalForm.imageUrl) {
-      alert('Silakan pilih file gambar jadwal ujian terlebih dahulu.');
+    if (!jadwalForm.judul.trim() || !jadwalForm.fileUrl) {
+      window.alert('Mohon lengkapi judul dan unggah berkas jadwal (PDF atau Gambar)!');
       return;
     }
+
     const newJadwal: JadwalUjianItem = {
       id: `jdw-${Date.now()}`,
-      termId: currentTerm.id,
       judul: jadwalForm.judul,
       tanggalUjian: jadwalForm.tanggalUjian,
-      imageUrl: jadwalForm.imageUrl,
       keterangan: jadwalForm.keterangan,
+      imageUrl: jadwalForm.fileUrl,
+      termId: currentTerm.id,
+      uploadedAt: new Date().toISOString(),
     };
+
     onUpdateJadwal([newJadwal, ...allJadwal]);
     setJadwalModal(false);
-    setJadwalForm({ judul: '', tanggalUjian: '', keterangan: '', imageUrl: '' });
   };
 
   const handleDeleteJadwal = (id: string) => {
-    if (confirm('Hapus gambar jadwal ujian ini?')) {
+    if (window.confirm('Hapus berkas jadwal ujian ini?')) {
       onUpdateJadwal(allJadwal.filter((j) => j.id !== id));
     }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       
-      {/* Sub Tabs Navigation */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-xs">
-        <div className="flex flex-wrap gap-1.5">
-          
-          <button
-            id="tab-lembaga-kelas"
-            onClick={() => setActiveTab('kelas')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
-              activeTab === 'kelas'
-                ? 'bg-emerald-700 text-white shadow-xs'
-                : 'text-slate-600 hover:bg-emerald-50'
-            }`}
-          >
-            <School className="w-4 h-4" />
-            <span>Daftar Kelas ({allKelas.length})</span>
-          </button>
-
-          <button
-            id="tab-lembaga-mapel"
-            onClick={() => setActiveTab('mapel')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
-              activeTab === 'mapel'
-                ? 'bg-emerald-700 text-white shadow-xs'
-                : 'text-slate-600 hover:bg-emerald-50'
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            <span>Mata Pelajaran ({allMapel.length})</span>
-          </button>
-
-          <button
-            id="tab-lembaga-jadwal"
-            onClick={() => setActiveTab('jadwal')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
-              activeTab === 'jadwal'
-                ? 'bg-emerald-700 text-white shadow-xs'
-                : 'text-slate-600 hover:bg-emerald-50'
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            <span>Jadwal Ujian (Poster Gambar)</span>
-          </button>
-
+      {/* Active Sub-Section Header Banner */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-3 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-emerald-800 text-amber-300 flex items-center justify-center font-bold shadow-xs">
+            {activeTab === 'kelas' && <School className="w-4 h-4" />}
+            {activeTab === 'mapel' && <BookOpen className="w-4 h-4" />}
+            {activeTab === 'jadwal' && <Calendar className="w-4 h-4" />}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase font-extrabold tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                Lembaga
+              </span>
+              <span className="text-xs text-slate-400 font-bold">/</span>
+              <h2 className="text-xs sm:text-sm font-extrabold text-slate-800">
+                {activeTab === 'kelas' && `Daftar Kelas & Santri (${allKelas.length} Kelas)`}
+                {activeTab === 'mapel' && `Mata Pelajaran Ujian (${allMapel.length} Pelajaran)`}
+                {activeTab === 'jadwal' && `Jadwal Ujian (${allJadwal.length} Berkas)`}
+              </h2>
+            </div>
+          </div>
         </div>
 
-        <div className="text-xs font-semibold px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg">
-          Lembaga Akademik PPTQ Alhusna
+        <div className="text-xs font-semibold px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg">
+          {currentTerm.label}
         </div>
       </div>
 
       {/* ============================================================ */}
-      {/* TAB 1: DAFTAR KELAS (With Excel Upload inside Tambah Kelas Baru) */}
+      {/* TAB 1: DATA KELAS & SANTRI */}
       {/* ============================================================ */}
       {activeTab === 'kelas' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <School className="w-5 h-5 text-emerald-600" />
-                  <span>Daftar Halaqah &amp; Kelas Santri</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Kelola struktur kelas, wali kelas pembina, dan kuota santri per halaqah.
-                </p>
-              </div>
-
-              {/* Only Admin can add classes */}
-              {isAdmin && (
-                <button
-                  id="btn-tambah-kelas"
-                  onClick={() => {
-                    setEditingKelas(null);
-                    setKelasForm({
-                      nama: '',
-                      tingkat: 'Kelas 7',
-                      waliKelas: '',
-                      kapasitas: 25,
-                    });
-                    setKelasModalMode('manual');
-                    setParsedKelasList([]);
-                    setKelasExcelFile(null);
-                    setParseKelasStatus(null);
-                    setKelasModal(true);
-                  }}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Tambah Kelas Baru</span>
-                </button>
-              )}
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <School className="w-5 h-5 text-emerald-600" />
+                <span>Daftar Halaqah &amp; Kelas Santri</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Kelola struktur kelas, wali kelas pembina, dan daftar santri per halaqah.
+              </p>
             </div>
+
+            {isAdmin && (
+              <button
+                id="btn-tambah-kelas"
+                onClick={() => {
+                  setEditingKelas(null);
+                  setKelasForm({
+                    nama: '',
+                    tingkat: 'Kelas 7',
+                    waliKelas: '',
+                    kapasitas: 25,
+                  });
+                  setKelasModalMode('manual');
+                  setParsedKelasList([]);
+                  setKelasExcelFile(null);
+                  setParseKelasStatus(null);
+                  setKelasModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Kelas Baru</span>
+              </button>
+            )}
           </div>
 
           {/* Classes Cards Grid */}
@@ -313,7 +394,7 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
               return (
                 <div
                   key={kelas.id}
-                  className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition group"
+                  className="bg-white rounded-2xl p-4.5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition group"
                 >
                   <div>
                     <div className="flex items-center justify-between mb-2">
@@ -329,8 +410,8 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                       {kelas.nama}
                     </h4>
 
-                    <div className="mt-3 p-2.5 rounded-xl bg-slate-50 text-xs text-slate-600 border border-slate-100">
-                      <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">
+                    <div className="mt-2.5 p-2 rounded-xl bg-slate-50 text-xs text-slate-600 border border-slate-100">
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold">
                         Wali Kelas:
                       </span>
                       <span className="font-bold text-slate-800">
@@ -344,14 +425,14 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                       onClick={() => {
                         setViewSantriClass(kelas);
                         setSantriSearch('');
+                        setSantriUploadNotice(null);
                       }}
                       className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:text-emerald-800 px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 transition"
                     >
                       <Users className="w-3.5 h-3.5" />
-                      <span>Lihat Santri ({studentCount})</span>
+                      <span>Lihat &amp; Kelola Santri ({studentCount})</span>
                     </button>
 
-                    {/* Only Admin can edit or delete class */}
                     {isAdmin && (
                       <div className="flex items-center gap-1">
                         <button
@@ -369,18 +450,18 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                           className="p-1.5 rounded-md text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
                           title="Edit Kelas"
                         >
-                          <Edit2 className="w-4 h-4" />
+                          <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm(`Hapus kelas ${kelas.nama}? Data santri di kelas ini akan terpengaruh.`)) {
+                            if (window.confirm(`Hapus kelas ${kelas.nama}? Data santri di kelas ini akan terhapus.`)) {
                               onUpdateKelas(allKelas.filter((k) => k.id !== kelas.id));
                             }
                           }}
                           className="p-1.5 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
                           title="Hapus Kelas"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     )}
@@ -396,47 +477,44 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
       {/* TAB 2: MATA PELAJARAN */}
       {/* ============================================================ */}
       {activeTab === 'mapel' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-emerald-600" />
-                  <span>Daftar Mata Pelajaran Ujian</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Daftar kurikulum pelajaran kepesantrenan (Tahfidz, Diniyyah, Bahasa Arab, dan Umum).
-                </p>
-              </div>
-
-              {/* Only Admin can add mapel */}
-              {isAdmin && (
-                <button
-                  id="btn-tambah-mapel"
-                  onClick={() => {
-                    setEditingMapel(null);
-                    setMapelForm({
-                      kode: `MP-0${allMapel.length + 1}`,
-                      nama: '',
-                      kategori: 'Tahfidz',
-                      kkm: 75,
-                    });
-                    setMapelModal(true);
-                  }}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Tambah Mapel Baru</span>
-                </button>
-              )}
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-emerald-600" />
+                <span>Daftar Mata Pelajaran Ujian</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Kurikulum pelajaran kepesantrenan (Tahfidz, Diniyyah, Bahasa Arab, dan Umum).
+              </p>
             </div>
+
+            {isAdmin && (
+              <button
+                id="btn-tambah-mapel"
+                onClick={() => {
+                  setEditingMapel(null);
+                  setMapelForm({
+                    kode: `MP-0${allMapel.length + 1}`,
+                    nama: '',
+                    kategori: 'Tahfidz',
+                    kkm: 75,
+                  });
+                  setMapelModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Mapel Baru</span>
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {allMapel.map((mapel) => (
               <div
                 key={mapel.id}
-                className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition"
+                className="bg-white rounded-2xl p-4.5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition"
               >
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -458,9 +536,8 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                   </div>
                 </div>
 
-                {/* Admin controls for mapel */}
                 {isAdmin && (
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end gap-1.5">
                     <button
                       onClick={() => {
                         setEditingMapel(mapel);
@@ -475,18 +552,18 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                       className="p-1 rounded-md text-slate-500 hover:text-emerald-700 hover:bg-emerald-50"
                       title="Edit Mapel"
                     >
-                      <Edit2 className="w-4 h-4" />
+                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => {
-                        if (confirm(`Hapus mata pelajaran ${mapel.nama}?`)) {
+                        if (window.confirm(`Hapus mata pelajaran ${mapel.nama}?`)) {
                           onUpdateMapel(allMapel.filter((m) => m.id !== mapel.id));
                         }
                       }}
                       className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50"
                       title="Hapus Mapel"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 )}
@@ -497,159 +574,230 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* TAB 3: JADWAL UJIAN (DALAM BENTUK GAMBAR) */}
+      {/* TAB 3: JADWAL UJIAN (PDF / GAMBAR RESMI) */}
       {/* ============================================================ */}
       {activeTab === 'jadwal' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-emerald-600" />
-                  <span>Jadwal Ujian Santri (Format Gambar)</span>
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Jadwal resmi imtihan santri dalam bentuk gambar, dikelola oleh admin dan dapat dilihat oleh seluruh asatidz.
-                </p>
-              </div>
-
-              {/* Only Admin can upload schedule poster */}
-              {isAdmin && (
-                <button
-                  onClick={() => {
-                    setJadwalForm({
-                      judul: `Jadwal Imtihan Niha'i ${currentTerm.label}`,
-                      tanggalUjian: '15 - 21 Desember',
-                      keterangan: 'Jadwal resmi ujian semester santri.',
-                      imageUrl: '',
-                    });
-                    setJadwalModal(true);
-                  }}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Upload Poster Jadwal Baru</span>
-                </button>
-              )}
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-emerald-600" />
+                <span>Jadwal Ujian Santri (PDF &amp; Dokumen Resmi)</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Jadwal resmi imtihan santri dalam bentuk dokumen PDF / gambar, dapat dilihat dan diunduh oleh seluruh Asatidz.
+              </p>
             </div>
+
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setJadwalForm({
+                    judul: `Jadwal Imtihan Niha'i ${currentTerm.label}`,
+                    tanggalUjian: '15 - 21 Desember',
+                    keterangan: 'Jadwal resmi ujian semester santri.',
+                    fileUrl: '',
+                    fileType: 'pdf',
+                  });
+                  setJadwalModal(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Upload Dokumen / PDF Jadwal</span>
+              </button>
+            )}
           </div>
 
           {/* Jadwal Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {allJadwal.map((jadwal) => (
-              <div
-                key={jadwal.id}
-                className="bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-xs flex flex-col justify-between group hover:border-emerald-300 transition"
-              >
-                <div>
-                  {/* Image Display */}
-                  <div
-                    onClick={() => setPreviewImage(jadwal.imageUrl)}
-                    className="relative aspect-video w-full bg-slate-100 cursor-pointer overflow-hidden border-b border-slate-200"
-                    title="Klik untuk memperbesar gambar"
-                  >
-                    <img
-                      src={jadwal.imageUrl}
-                      alt={jadwal.judul}
-                      className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-200"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-2">
-                      <Eye className="w-5 h-5" />
-                      <span>Klik Untuk Perbesar Gambar</span>
-                    </div>
-                  </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {allJadwal.map((jadwal) => {
+              const isPdf =
+                jadwal.imageUrl?.startsWith('data:application/pdf') ||
+                jadwal.imageUrl?.toLowerCase().includes('.pdf');
 
-                  <div className="p-5">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                        {jadwal.tanggalUjian}
-                      </span>
-                    </div>
-
-                    <h4 className="text-base font-bold text-slate-900 leading-snug">
-                      {jadwal.judul}
-                    </h4>
-
-                    {jadwal.keterangan && (
-                      <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                        {jadwal.keterangan}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="p-5 pt-0 flex items-center justify-between border-t border-slate-100 mt-3 pt-3">
-                  <button
-                    onClick={() => setPreviewImage(jadwal.imageUrl)}
-                    className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:text-emerald-800"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Lihat Ukuran Penuh</span>
-                  </button>
-
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={jadwal.imageUrl}
-                      download={`Jadwal_Ujian_Alhusna_${jadwal.id}.png`}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition"
-                      title="Download Gambar"
-                    >
-                      <Download className="w-4 h-4" />
-                    </a>
-
-                    {/* Admin delete button */}
-                    {isAdmin && (
-                      <button
-                        onClick={() => handleDeleteJadwal(jadwal.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                        title="Hapus Poster Jadwal"
+              return (
+                <div
+                  key={jadwal.id}
+                  className="bg-white rounded-2xl overflow-hidden border border-slate-200/80 shadow-xs flex flex-col justify-between group hover:border-emerald-300 transition"
+                >
+                  <div>
+                    {/* Preview header / thumbnail */}
+                    {isPdf ? (
+                      <div
+                        onClick={() =>
+                          setPreviewDocUrl({
+                            url: jadwal.imageUrl,
+                            title: jadwal.judul,
+                            isPdf: true,
+                          })
+                        }
+                        className="h-44 w-full bg-gradient-to-br from-slate-100 to-slate-200 cursor-pointer flex flex-col items-center justify-center p-4 border-b border-slate-200 group-hover:bg-slate-100 transition"
                       >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                        <FileText className="w-12 h-12 text-rose-600 mb-2" />
+                        <span className="text-xs font-bold text-slate-800 text-center">
+                          Dokumen Resmi (PDF)
+                        </span>
+                        <span className="text-[11px] text-emerald-700 font-semibold mt-1">
+                          Klik untuk Buka Layar Penuh →
+                        </span>
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() =>
+                          setPreviewDocUrl({
+                            url: jadwal.imageUrl,
+                            title: jadwal.judul,
+                            isPdf: false,
+                          })
+                        }
+                        className="relative aspect-video w-full bg-slate-100 cursor-pointer overflow-hidden border-b border-slate-200"
+                        title="Klik untuk memperbesar gambar"
+                      >
+                        <img
+                          src={jadwal.imageUrl}
+                          alt={jadwal.judul}
+                          className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-200"
+                          referrerPolicy="no-referrer"
+                        />
+                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-2">
+                          <Eye className="w-5 h-5" />
+                          <span>Klik Untuk Perbesar Gambar</span>
+                        </div>
+                      </div>
                     )}
+
+                    <div className="p-4">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                          {jadwal.tanggalUjian}
+                        </span>
+                        {isPdf && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-100 text-rose-800">
+                            PDF Format
+                          </span>
+                        )}
+                      </div>
+
+                      <h4 className="text-sm font-bold text-slate-900 leading-snug">
+                        {jadwal.judul}
+                      </h4>
+
+                      {jadwal.keterangan && (
+                        <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                          {jadwal.keterangan}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-4 pt-0 flex items-center justify-between border-t border-slate-100 mt-2 pt-3">
+                    <button
+                      onClick={() =>
+                        setPreviewDocUrl({
+                          url: jadwal.imageUrl,
+                          title: jadwal.judul,
+                          isPdf: isPdf,
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 hover:text-emerald-800"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Buka Layar Penuh</span>
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={jadwal.imageUrl}
+                        download={`Jadwal_Ujian_Alhusna_${jadwal.id}.${isPdf ? 'pdf' : 'png'}`}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition"
+                        title="Download Berkas"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleDeleteJadwal(jadwal.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                          title="Hapus Jadwal"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
 
       {/* ============================================================ */}
-      {/* MODAL: Fullscreen Image Preview */}
+      {/* MODAL: Fullscreen Document (PDF / Image) Preview */}
       {/* ============================================================ */}
-      {previewImage && (
+      {previewDocUrl && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 cursor-zoom-out"
-          onClick={() => setPreviewImage(null)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
         >
-          <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center">
-            <button
-              onClick={() => setPreviewImage(null)}
-              className="absolute -top-10 right-0 text-white hover:text-slate-300 font-bold text-xl"
-            >
-              ✕ Tutup
-            </button>
-            <img
-              src={previewImage}
-              alt="Jadwal Ujian Penuh"
-              className="max-h-[85vh] w-auto rounded-xl object-contain shadow-2xl bg-white"
-              referrerPolicy="no-referrer"
-            />
+          <div className="relative max-w-4xl w-full h-[90vh] bg-white rounded-2xl flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95">
+            <div className="bg-emerald-800 text-white p-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-emerald-200" />
+                <h4 className="font-bold text-sm truncate max-w-md">
+                  {previewDocUrl.title}
+                </h4>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewDocUrl.url}
+                  download={`Jadwal_Ujian_${previewDocUrl.isPdf ? 'Dokumen.pdf' : 'Poster.png'}`}
+                  className="px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-xs font-bold flex items-center gap-1"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </a>
+
+                <button
+                  onClick={() => setPreviewDocUrl(null)}
+                  className="text-white hover:text-emerald-200 font-bold px-2 py-1"
+                >
+                  ✕ Tutup
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 bg-slate-900 flex items-center justify-center overflow-auto p-2">
+              {previewDocUrl.isPdf ? (
+                <iframe
+                  src={previewDocUrl.url}
+                  title={previewDocUrl.title}
+                  className="w-full h-full rounded border-0 bg-white"
+                />
+              ) : (
+                <img
+                  src={previewDocUrl.url}
+                  alt={previewDocUrl.title}
+                  className="max-h-full max-w-full object-contain rounded"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* ============================================================ */}
-      {/* MODAL: Upload Poster Jadwal Ujian (Admin) */}
+      {/* MODAL: Upload Poster / PDF Jadwal Ujian (Admin) */}
       {/* ============================================================ */}
       {jadwalModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-emerald-800 text-white p-4 flex items-center justify-between">
               <h4 className="font-bold text-sm sm:text-base">
-                Upload Poster Jadwal Ujian
+                Upload Jadwal Ujian (PDF / Gambar)
               </h4>
               <button
                 onClick={() => setJadwalModal(false)}
@@ -659,23 +807,23 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveJadwal} className="p-5 space-y-3.5">
+            <form onSubmit={handleSaveJadwal} className="p-4 space-y-3 text-xs">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Judul Jadwal Ujian
+                <label className="block font-bold text-slate-700 mb-1">
+                  Judul Dokumen Jadwal
                 </label>
                 <input
                   type="text"
                   value={jadwalForm.judul}
                   onChange={(e) => setJadwalForm({ ...jadwalForm, judul: e.target.value })}
-                  placeholder="Contoh: Jadwal Ujian Akhir Semester Ganjil"
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  placeholder="Contoh: Jadwal Imtihan Niha'i Semester Ganjil"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block font-bold text-slate-700 mb-1">
                   Rentang Tanggal Pelaksanaan
                 </label>
                 <input
@@ -683,43 +831,39 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                   value={jadwalForm.tanggalUjian}
                   onChange={(e) => setJadwalForm({ ...jadwalForm, tanggalUjian: e.target.value })}
                   placeholder="Contoh: 15 - 22 Desember 2025"
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  File Gambar Jadwal (PNG / JPG / JPEG)
+                <label className="block font-bold text-slate-700 mb-1">
+                  Pilih File Berkas (Format PDF atau Gambar PNG/JPG)
                 </label>
                 <input
                   type="file"
-                  accept="image/*"
-                  onChange={handleJadwalImageUpload}
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-slate-50"
+                  accept="image/*, application/pdf"
+                  onChange={handleJadwalFileUpload}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg bg-slate-50 text-xs"
                   required
                 />
-                {jadwalForm.imageUrl && (
-                  <div className="mt-2 h-28 rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
-                    <img
-                      src={jadwalForm.imageUrl}
-                      alt="Pratinjau"
-                      className="w-full h-full object-contain"
-                      referrerPolicy="no-referrer"
-                    />
+                {jadwalForm.fileUrl && (
+                  <div className="mt-2 text-[11px] text-emerald-700 font-semibold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Berkas siap disimpan ({jadwalForm.fileType.toUpperCase()})</span>
                   </div>
                 )}
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block font-bold text-slate-700 mb-1">
                   Catatan / Keterangan Tambahan
                 </label>
                 <textarea
                   value={jadwalForm.keterangan}
                   onChange={(e) => setJadwalForm({ ...jadwalForm, keterangan: e.target.value })}
-                  placeholder="Contoh: Seluruh santri wajib hadir tepat waktu..."
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  placeholder="Instruksi tambahan untuk asatidz dan santri..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   rows={2}
                 />
               </div>
@@ -728,15 +872,15 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setJadwalModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition shadow-xs"
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs"
                 >
-                  Simpan Gambar Jadwal
+                  Simpan Jadwal
                 </button>
               </div>
             </form>
@@ -745,382 +889,13 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* MODAL: TAMBAH KELAS BARU (WITH EXCEL UPLOAD OPTION) */}
-      {/* ============================================================ */}
-      {kelasModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-emerald-800 text-white p-4 flex items-center justify-between">
-              <h4 className="font-bold text-sm sm:text-base">
-                {editingKelas ? 'Edit Data Kelas' : 'Tambah Kelas Baru'}
-              </h4>
-              <button
-                onClick={() => setKelasModal(false)}
-                className="text-emerald-200 hover:text-white font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Mode Switcher (Manual vs Upload Excel) - Only for New Classes */}
-            {!editingKelas && (
-              <div className="flex border-b border-slate-200 bg-slate-50 p-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setKelasModalMode('manual')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                    kelasModalMode === 'manual'
-                      ? 'bg-white text-emerald-800 shadow-xs border border-emerald-200'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <School className="w-3.5 h-3.5" />
-                  <span>Input Manual 1 Kelas</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setKelasModalMode('excel')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                    kelasModalMode === 'excel'
-                      ? 'bg-emerald-700 text-white shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>Upload File Excel (.xlsx)</span>
-                </button>
-              </div>
-            )}
-
-            {/* Sub-view 1: Manual Form */}
-            {kelasModalMode === 'manual' || editingKelas ? (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (editingKelas) {
-                    onUpdateKelas(
-                      allKelas.map((k) => (k.id === editingKelas.id ? { ...k, ...kelasForm } : k))
-                    );
-                  } else {
-                    onUpdateKelas([
-                      ...allKelas,
-                      {
-                        id: `kls-${Date.now()}`,
-                        ...kelasForm,
-                      },
-                    ]);
-                  }
-                  setKelasModal(false);
-                }}
-                className="p-5 space-y-3.5"
-              >
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Nama Kelas
-                  </label>
-                  <input
-                    type="text"
-                    value={kelasForm.nama}
-                    onChange={(e) => setKelasForm({ ...kelasForm, nama: e.target.value })}
-                    placeholder="Contoh: Kelas 7C Tahfidz (Putri)"
-                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Tingkat / Jenjang
-                    </label>
-                    <input
-                      type="text"
-                      value={kelasForm.tingkat}
-                      onChange={(e) => setKelasForm({ ...kelasForm, tingkat: e.target.value })}
-                      placeholder="Contoh: Kelas 7"
-                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Kapasitas Santri
-                    </label>
-                    <input
-                      type="number"
-                      value={kelasForm.kapasitas}
-                      onChange={(e) => setKelasForm({ ...kelasForm, kapasitas: parseInt(e.target.value) || 25 })}
-                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Wali Kelas / Ustadz Pembina
-                  </label>
-                  <input
-                    type="text"
-                    value={kelasForm.waliKelas}
-                    onChange={(e) => setKelasForm({ ...kelasForm, waliKelas: e.target.value })}
-                    placeholder="Contoh: Ust. Syihabuddin Al-Bantani"
-                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setKelasModal(false)}
-                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition shadow-xs"
-                  >
-                    Simpan Data Kelas
-                  </button>
-                </div>
-              </form>
-            ) : (
-              /* Sub-view 2: Upload Excel File for Classes */
-              <div className="p-5 space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50 border border-emerald-200">
-                  <div>
-                    <p className="text-xs font-bold text-emerald-900">
-                      Format Berkas Excel Kelas
-                    </p>
-                    <p className="text-[11px] text-emerald-700">
-                      Kolom: No, Nama Kelas, Tingkat, Kapasitas, Wali Kelas
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => downloadKelasTemplateExcel()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition shadow-2xs"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Download Template</span>
-                  </button>
-                </div>
-
-                {/* Upload File Input */}
-                <div className="p-4 rounded-xl border-2 border-dashed border-emerald-300 bg-slate-50 hover:border-emerald-500 transition text-center">
-                  <Upload className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-                  <p className="text-xs font-bold text-slate-800">
-                    Pilih Berkas Excel Daftar Kelas (.xlsx, .xls, .csv)
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-1 mb-3">
-                    Sistem otomatis membaca baris data kelas di berkas
-                  </p>
-                  <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition">
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>{kelasExcelFile ? kelasExcelFile.name : 'Pilih File Excel'}</span>
-                    <input
-                      type="file"
-                      accept=".xlsx, .xls, .csv"
-                      onChange={handleKelasExcelFileChange}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-
-                {/* Status Notice */}
-                {parseKelasStatus && (
-                  <div
-                    className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
-                      parseKelasStatus.success
-                        ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                        : 'bg-red-50 border border-red-200 text-red-800'
-                    }`}
-                  >
-                    {parseKelasStatus.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
-                    )}
-                    <span>{parseKelasStatus.message}</span>
-                  </div>
-                )}
-
-                {/* Preview of Parsed Classes */}
-                {parsedKelasList.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-bold text-slate-700">
-                      Pratinjau Data Kelas ({parsedKelasList.length} Kelas Terdeteksi):
-                    </p>
-                    <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white">
-                      {parsedKelasList.map((k, idx) => (
-                        <div key={idx} className="p-2.5 flex items-center justify-between text-xs">
-                          <div>
-                            <span className="font-bold text-slate-900">{k.nama}</span>
-                            <span className="text-[11px] text-slate-500 ml-2">({k.tingkat})</span>
-                          </div>
-                          <div className="text-[11px] text-emerald-700 font-medium">
-                            {k.waliKelas || 'Wali belum diisi'} • Kap: {k.kapasitas}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setKelasModal(false)}
-                    className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    type="button"
-                    disabled={parsedKelasList.length === 0}
-                    onClick={handleCommitKelasExcel}
-                    className={`px-4 py-2 text-xs font-bold text-white rounded-lg transition shadow-xs flex items-center gap-1.5 ${
-                      parsedKelasList.length > 0
-                        ? 'bg-emerald-700 hover:bg-emerald-800 cursor-pointer'
-                        : 'bg-slate-300 cursor-not-allowed'
-                    }`}
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>Impor {parsedKelasList.length} Kelas ke Sistem</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================ */}
-      {/* MODAL: Tambah/Edit Mapel (Admin) */}
-      {/* ============================================================ */}
-      {mapelModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-emerald-800 text-white p-4 flex items-center justify-between">
-              <h4 className="font-bold text-sm sm:text-base">
-                {editingMapel ? 'Edit Mata Pelajaran' : 'Tambah Mata Pelajaran'}
-              </h4>
-              <button
-                onClick={() => setMapelModal(false)}
-                className="text-emerald-200 hover:text-white font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (editingMapel) {
-                  onUpdateMapel(
-                    allMapel.map((m) => (m.id === editingMapel.id ? { ...m, ...mapelForm } : m))
-                  );
-                } else {
-                  onUpdateMapel([
-                    ...allMapel,
-                    {
-                      id: `mapel-${Date.now()}`,
-                      ...mapelForm,
-                    },
-                  ]);
-                }
-                setMapelModal(false);
-              }}
-              className="p-5 space-y-3.5"
-            >
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Kode Mapel
-                  </label>
-                  <input
-                    type="text"
-                    value={mapelForm.kode}
-                    onChange={(e) => setMapelForm({ ...mapelForm, kode: e.target.value })}
-                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Kategori
-                  </label>
-                  <select
-                    value={mapelForm.kategori}
-                    onChange={(e) => setMapelForm({ ...mapelForm, kategori: e.target.value as MataPelajaran['kategori'] })}
-                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    <option value="Tahfidz">Tahfidz</option>
-                    <option value="Diniyyah">Diniyyah</option>
-                    <option value="Bahasa">Bahasa</option>
-                    <option value="Umum">Umum</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Nama Mata Pelajaran
-                </label>
-                <input
-                  type="text"
-                  value={mapelForm.nama}
-                  onChange={(e) => setMapelForm({ ...mapelForm, nama: e.target.value })}
-                  placeholder="Contoh: Fiqih Ibadah"
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Nilai KKM (Kriteria Ketuntasan Minimal)
-                </label>
-                <input
-                  type="number"
-                  value={mapelForm.kkm}
-                  onChange={(e) => setMapelForm({ ...mapelForm, kkm: parseInt(e.target.value) || 75 })}
-                  min={0}
-                  max={100}
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                  required
-                />
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMapelModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition shadow-xs"
-                >
-                  Simpan Mapel
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================ */}
-      {/* MODAL / DRAWER: Lihat Data Santri Per Kelas */}
+      {/* MODAL / DRAWER: Lihat & Upload Santri Per Kelas (Excel) */}
       {/* ============================================================ */}
       {viewSantriClass && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
-            <div className="bg-emerald-800 text-white p-4 flex items-center justify-between flex-shrink-0">
+            <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-emerald-200" />
                 <div>
@@ -1141,32 +916,79 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
             </div>
 
             {/* Filter & Action Toolbar */}
-            <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50 flex-shrink-0">
-              <div className="relative w-full sm:w-64">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <div className="p-3 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5 bg-slate-50 flex-shrink-0">
+              <div className="relative w-full sm:w-56">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={santriSearch}
                   onChange={(e) => setSantriSearch(e.target.value)}
-                  placeholder="Cari nama atau NIS santri..."
-                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  placeholder="Cari nama / NIS santri..."
+                  className="w-full pl-8 pr-3 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                 />
               </div>
 
-              {/* Admin can add santri manually */}
+              {/* Excel Upload & Manual Add Buttons (Admin) */}
               {isAdmin && (
-                <button
-                  onClick={() => setManualSantriModal(true)}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Tambah Santri</span>
-                </button>
+                <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end">
+                  {/* Hidden Santri Excel File Input */}
+                  <input
+                    type="file"
+                    ref={santriFileInputRef}
+                    accept=".xlsx, .xls, .csv"
+                    onChange={handleSantriExcelUpload}
+                    className="hidden"
+                  />
+
+                  <button
+                    onClick={() => santriFileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-300 text-xs font-bold hover:bg-emerald-100 transition"
+                    title="Upload file Excel nama santri khusus kelas ini"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload Excel Santri</span>
+                  </button>
+
+                  <button
+                    onClick={() => downloadSantriTemplateExcel(viewSantriClass.nama)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white text-slate-700 border border-slate-300 text-xs font-semibold hover:bg-slate-100 transition"
+                    title="Download template Excel santri untuk kelas ini"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Template</span>
+                  </button>
+
+                  <button
+                    onClick={() => setManualSantriModal(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold shadow-xs transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Manual</span>
+                  </button>
+                </div>
               )}
             </div>
 
+            {/* Upload Notification Alert */}
+            {santriUploadNotice && (
+              <div
+                className={`p-2.5 text-xs flex items-center gap-2 ${
+                  santriUploadNotice.success
+                    ? 'bg-emerald-50 text-emerald-800 border-b border-emerald-200'
+                    : 'bg-rose-50 text-rose-800 border-b border-rose-200'
+                }`}
+              >
+                {santriUploadNotice.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                )}
+                <span>{santriUploadNotice.message}</span>
+              </div>
+            )}
+
             {/* Santri Table List */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-3">
               {(() => {
                 const filtered = allSantri
                   .filter((s) => s.kelasId === viewSantriClass.id)
@@ -1178,10 +1000,10 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
 
                 if (filtered.length === 0) {
                   return (
-                    <div className="py-12 text-center text-slate-400 text-xs">
+                    <div className="py-10 text-center text-slate-400 text-xs">
                       {santriSearch
                         ? 'Tidak ada santri yang cocok dengan pencarian.'
-                        : 'Belum ada santri terdaftar di kelas ini.'}
+                        : 'Belum ada santri di kelas ini. Klik "Upload Excel Santri" untuk mengisi nama-nama santri sekaligus.'}
                     </div>
                   );
                 }
@@ -1189,11 +1011,11 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                 return (
                   <table className="w-full text-left text-xs">
                     <thead>
-                      <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10px]">
+                      <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10px] bg-slate-50">
                         <th className="py-2 px-3">No</th>
                         <th className="py-2 px-3">NIS</th>
                         <th className="py-2 px-3">Nama Santri</th>
-                        <th className="py-2 px-3">L/P</th>
+                        <th className="py-2 px-2 text-center">L/P</th>
                         <th className="py-2 px-3">Halaqah</th>
                         <th className="py-2 px-3">Kamar</th>
                         {isAdmin && <th className="py-2 px-3 text-right">Aksi</th>}
@@ -1202,14 +1024,14 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                     <tbody className="divide-y divide-slate-100">
                       {filtered.map((santri, idx) => (
                         <tr key={santri.id} className="hover:bg-slate-50">
-                          <td className="py-2.5 px-3 text-slate-400 font-medium">{idx + 1}</td>
-                          <td className="py-2.5 px-3 font-mono font-semibold text-slate-800">{santri.nis}</td>
-                          <td className="py-2.5 px-3 font-bold text-slate-900">{santri.nama}</td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-600">{santri.jenisKelamin}</td>
-                          <td className="py-2.5 px-3 text-emerald-800">{santri.halaqah || '-'}</td>
-                          <td className="py-2.5 px-3 text-slate-600">{santri.kamar || '-'}</td>
+                          <td className="py-2 px-3 text-slate-400 font-medium">{idx + 1}</td>
+                          <td className="py-2 px-3 font-mono font-semibold text-slate-700">{santri.nis}</td>
+                          <td className="py-2 px-3 font-bold text-slate-900">{santri.nama}</td>
+                          <td className="py-2 px-2 text-center font-semibold text-slate-600">{santri.jenisKelamin}</td>
+                          <td className="py-2 px-3 text-emerald-800">{santri.halaqah || '-'}</td>
+                          <td className="py-2 px-3 text-slate-600">{santri.kamar || '-'}</td>
                           {isAdmin && (
-                            <td className="py-2.5 px-3 text-right">
+                            <td className="py-2 px-3 text-right">
                               <button
                                 onClick={() => handleDeleteSantri(santri.id)}
                                 className="text-slate-400 hover:text-rose-600 p-1"
@@ -1249,7 +1071,7 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
       {manualSantriModal && viewSantriClass && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-emerald-800 text-white p-4 flex items-center justify-between">
+            <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between">
               <h4 className="font-bold text-sm sm:text-base">
                 Tambah Santri ke {viewSantriClass.nama}
               </h4>
@@ -1261,9 +1083,9 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveManualSantri} className="p-5 space-y-3.5">
+            <form onSubmit={handleSaveManualSantri} className="p-4 space-y-3 text-xs">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block font-bold text-slate-700 mb-1">
                   NIS (Nomor Induk Santri)
                 </label>
                 <input
@@ -1271,13 +1093,13 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                   value={manualSantriForm.nis}
                   onChange={(e) => setManualSantriForm({ ...manualSantriForm, nis: e.target.value })}
                   placeholder="Contoh: 202507012"
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block font-bold text-slate-700 mb-1">
                   Nama Lengkap Santri
                 </label>
                 <input
@@ -1285,27 +1107,27 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                   value={manualSantriForm.nama}
                   onChange={(e) => setManualSantriForm({ ...manualSantriForm, nama: e.target.value })}
                   placeholder="Nama santri..."
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block font-bold text-slate-700 mb-1">
                     Jenis Kelamin
                   </label>
                   <select
                     value={manualSantriForm.jenisKelamin}
                     onChange={(e) => setManualSantriForm({ ...manualSantriForm, jenisKelamin: e.target.value as 'L' | 'P' })}
-                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
                   >
                     <option value="L">Laki-laki (L)</option>
                     <option value="P">Perempuan (P)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block font-bold text-slate-700 mb-1">
                     Asrama / Kamar
                   </label>
                   <input
@@ -1313,13 +1135,13 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                     value={manualSantriForm.kamar}
                     onChange={(e) => setManualSantriForm({ ...manualSantriForm, kamar: e.target.value })}
                     placeholder="Asrama Abu Bakar..."
-                    className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block font-bold text-slate-700 mb-1">
                   Halaqah Tahfidz
                 </label>
                 <input
@@ -1327,7 +1149,7 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                   value={manualSantriForm.halaqah}
                   onChange={(e) => setManualSantriForm({ ...manualSantriForm, halaqah: e.target.value })}
                   placeholder="Contoh: Halaqah Imam Ashim"
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                 />
               </div>
 
@@ -1335,15 +1157,209 @@ export const LembagaView: React.FC<LembagaViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setManualSantriModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition shadow-xs"
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs"
                 >
                   Tambahkan Santri
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* MODAL: TAMBAH KELAS BARU */}
+      {/* ============================================================ */}
+      {kelasModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between">
+              <h4 className="font-bold text-sm">
+                {editingKelas ? 'Edit Data Kelas' : 'Tambah Kelas / Halaqah Baru'}
+              </h4>
+              <button
+                onClick={() => setKelasModal(false)}
+                className="text-emerald-200 hover:text-white font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveKelas} className="p-4 space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Nama Kelas
+                </label>
+                <input
+                  type="text"
+                  value={kelasForm.nama}
+                  onChange={(e) => setKelasForm({ ...kelasForm, nama: e.target.value })}
+                  placeholder="Contoh: Kelas 7A Tahfidz (Putra)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Tingkat
+                  </label>
+                  <select
+                    value={kelasForm.tingkat}
+                    onChange={(e) => setKelasForm({ ...kelasForm, tingkat: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="Kelas 7">Kelas 7</option>
+                    <option value="Kelas 8">Kelas 8</option>
+                    <option value="Kelas 9">Kelas 9</option>
+                    <option value="Takhasus">Takhasus</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Kapasitas Santri
+                  </label>
+                  <input
+                    type="number"
+                    value={kelasForm.kapasitas}
+                    onChange={(e) => setKelasForm({ ...kelasForm, kapasitas: parseInt(e.target.value) || 25 })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                    min={1}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Wali Kelas Pembina
+                </label>
+                <input
+                  type="text"
+                  value={kelasForm.waliKelas}
+                  onChange={(e) => setKelasForm({ ...kelasForm, waliKelas: e.target.value })}
+                  placeholder="Nama Ustadz / Pembina"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setKelasModal(false)}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs"
+                >
+                  Simpan Kelas
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* MODAL: TAMBAH / EDIT MAPEL */}
+      {/* ============================================================ */}
+      {mapelModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between">
+              <h4 className="font-bold text-sm">
+                {editingMapel ? 'Edit Mata Pelajaran' : 'Tambah Mata Pelajaran Baru'}
+              </h4>
+              <button
+                onClick={() => setMapelModal(false)}
+                className="text-emerald-200 hover:text-white font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMapel} className="p-4 space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Kode Mapel
+                  </label>
+                  <input
+                    type="text"
+                    value={mapelForm.kode}
+                    onChange={(e) => setMapelForm({ ...mapelForm, kode: e.target.value })}
+                    placeholder="Contoh: MP-01"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Kategori
+                  </label>
+                  <select
+                    value={mapelForm.kategori}
+                    onChange={(e) => setMapelForm({ ...mapelForm, kategori: e.target.value as any })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="Tahfidz">Tahfidz</option>
+                    <option value="Diniyyah">Diniyyah</option>
+                    <option value="Bahasa Arab">Bahasa Arab</option>
+                    <option value="Umum">Umum</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Nama Mata Pelajaran
+                </label>
+                <input
+                  type="text"
+                  value={mapelForm.nama}
+                  onChange={(e) => setMapelForm({ ...mapelForm, nama: e.target.value })}
+                  placeholder="Contoh: Tahfidzul Qur'an (Juz 1-5)"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  KKM (Kriteria Ketuntasan Minimal)
+                </label>
+                <input
+                  type="number"
+                  value={mapelForm.kkm}
+                  onChange={(e) => setMapelForm({ ...mapelForm, kkm: parseInt(e.target.value) || 75 })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  min={50}
+                  max={100}
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMapelModal(false)}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs"
+                >
+                  Simpan Mapel
                 </button>
               </div>
             </form>

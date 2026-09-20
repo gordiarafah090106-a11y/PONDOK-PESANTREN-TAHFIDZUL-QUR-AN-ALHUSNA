@@ -25,7 +25,7 @@ export interface RolePermissions {
 export interface Petinggi {
   id: string;
   nama: string;
-  gelar: string;
+  gelar?: string;
   jabatan: string;
   kontak?: string;
   foto?: string;
@@ -69,15 +69,22 @@ export interface Santri {
 
 export interface Asatidz {
   id: string;
-  nip?: string;
+  nip: string; // NIK / NUPTK / Username
   nama: string;
   gelar?: string;
-  mataPelajaranIds: string[];
-  kelasIds: string[];
+  gender?: 'L' | 'P';
+  ttl?: string; // Tempat, Tanggal Lahir (e.g. "RANTAU EMBACANG, 14 Agustus 1995")
+  pendidikan?: string; // e.g. "Sarjana (S1)", "Doktor (S3)", "SMA/MA/Sederajat"
+  password?: string; // Password login guru (e.g. "MP2471FV")
+  waliKelas?: string; // e.g. "Kelas 7A Tahfidz (Putra)" or empty
+  jtm?: number; // Jam Tatap Muka (e.g. 24)
+  mataPelajaranIds: string[]; // Mata pelajaran yang ditugaskan
+  kelasIds: string[]; // Kelas yang diajar
   noHp?: string;
   email?: string;
   kontak?: string;
-  status?: string;
+  status: 'Aktif' | 'Cuti' | 'Non-Aktif';
+  foto?: string;
 }
 
 export interface NilaiSantri {
@@ -101,8 +108,22 @@ export interface JadwalUjianItem {
   termId: string;
   judul: string;
   tanggalUjian: string;
-  imageUrl: string;
+  imageUrl: string; // Base64 or URL (PDF or Image)
+  fileName?: string;
+  fileType?: 'pdf' | 'image';
+  fileSize?: string;
   keterangan?: string;
+  uploadedAt?: string;
+}
+
+export interface Pengumuman {
+  id: string;
+  judul: string;
+  kategori: 'Penting' | 'Pengumuman' | 'Ujian' | 'Info' | 'Umum';
+  konten: string;
+  tanggal: string;
+  penulis: string;
+  pinned?: boolean;
 }
 
 export interface PesantrenProfile {
@@ -110,6 +131,7 @@ export interface PesantrenProfile {
   subTitle: string;
   nspp: string;
   skKemenag?: string;
+  tahunBerdiri?: string;
   alamat: string;
   desa: string;
   kecamatan: string;

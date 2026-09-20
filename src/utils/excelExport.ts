@@ -493,3 +493,280 @@ export async function parseKelasExcel(
   }
 }
 
+/**
+ * Download sample Excel template for Asatidz/Guru bulk upload
+ * Matching Image 1 columns: NIK/NUPTK, Nama, L/P, TTL, Pendidikan, Password, Wali Kelas, JTM
+ */
+export function downloadGuruTemplateExcel() {
+  const wb = XLSX.utils.book_new();
+
+  const templateData: (string | number)[][] = [
+    ['TEMPLATE DATA GURU & AKUN ASATIDZ - PPTQ ALHUSNA'],
+    ['Petunjuk: Isi NIK/NUPTK (sebagai ID Login), Nama, L/P, TTL, Pendidikan, Password login, Wali Kelas, dan JTM.'],
+    [''],
+    ['NO', 'NIK/NUPTK', 'NAMA GURU', 'L/P', 'TEMPAT TANGGAL LAHIR', 'PENDIDIKAN', 'PASSWORD', 'WALI KELAS', 'JTM'],
+    [1, '198507142010011001', 'Ust. Abdullah Al-Hafidz', 'L', 'RANTAU EMBACANG, 14 Agustus 1985', 'Sarjana (S1)', 'MP2471FV', 'Kelas 7A Tahfidz (Putra)', 24],
+    [2, '199205022015011002', 'Ust. Fauzan Adhim, S.Pd.I.', 'L', 'MUARA BUNGO, 02 Mei 1992', 'Sarjana (S1)', 'Basri1973', 'Kelas 7B Tahfidz (Putra)', 22],
+    [3, '198810192013011003', 'Ust. Mansur Hidayatulloh, Lc.', 'L', 'PADANG, 19 Oktober 1988', 'Magister (S2)', 'DHRK9MQW', 'Kelas 9A Takhasus (Putra)', 26],
+    [4, '199601102019011004', 'Ust. M. Zaki Mubarak, S.Q.', 'L', 'JAMBI, 10 Januari 1996', 'Sarjana (S1)', 'ZAKI2025', 'Kelas 8A Tahfidz (Putra)', 20],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(templateData);
+
+  ws['!cols'] = [
+    { wch: 6 },
+    { wch: 22 },
+    { wch: 32 },
+    { wch: 8 },
+    { wch: 35 },
+    { wch: 18 },
+    { wch: 16 },
+    { wch: 28 },
+    { wch: 8 },
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Template_Guru');
+  XLSX.writeFile(wb, 'Template_Data_Guru_PPTQ_Alhusna.xlsx');
+}
+
+/**
+ * Parse Excel file for Guru bulk upload
+ */
+export async function parseGuruExcel(
+  file: File
+): Promise<{ success: boolean; data: Omit<Asatidz, 'id'>[]; message: string }> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) {
+      return { success: false, data: [], message: 'File Excel tidak memiliki lembar kerja (sheet).' };
+    }
+
+    const worksheet = workbook.Sheets[sheetName];
+    const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][];
+
+    if (!rawData || rawData.length === 0) {
+      return { success: false, data: [], message: 'Lembar kerja kosong.' };
+    }
+
+    // Locate header row
+    let headerRowIndex = -1;
+    let nipCol = -1;
+    let namaCol = -1;
+    let lpCol = -1;
+    let ttlCol = -1;
+    let pddkCol = -1;
+    let passCol = -1;
+    let waliCol = -1;
+    let jtmCol = -1;
+
+    for (let i = 0; i < Math.min(rawData.length, 10); i++) {
+      const row = rawData[i];
+      if (Array.isArray(row)) {
+        row.forEach((cell, colIdx) => {
+          const text = String(cell || '').trim().toUpperCase();
+          if (text.includes('NIK') || text.includes('NUPTK') || text.includes('NIP')) nipCol = colIdx;
+          if (text.includes('NAMA')) namaCol = colIdx;
+          if (text.includes('L/P') || text === 'JK' || text.includes('GENDER')) lpCol = colIdx;
+          if (text.includes('TTL') || text.includes('LAHIR')) ttlCol = colIdx;
+          if (text.includes('PENDIDIKAN')) pddkCol = colIdx;
+          if (text.includes('PASSWORD') || text.includes('SANDI')) passCol = colIdx;
+          if (text.includes('WALI')) waliCol = colIdx;
+          if (text.includes('JTM') || text.includes('JAM')) jtmCol = colIdx;
+        });
+
+        if (namaCol !== -1) {
+          headerRowIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (headerRowIndex === -1) {
+      nipCol = 1;
+      namaCol = 2;
+      lpCol = 3;
+      ttlCol = 4;
+      pddkCol = 5;
+      passCol = 6;
+      waliCol = 7;
+      jtmCol = 8;
+      headerRowIndex = 2;
+    }
+
+    const guruList: Omit<Asatidz, 'id'>[] = [];
+
+    for (let r = headerRowIndex + 1; r < rawData.length; r++) {
+      const row = rawData[r];
+      if (!row || !Array.isArray(row)) continue;
+
+      const nama = String(row[namaCol] || '').trim();
+      if (!nama || nama.toLowerCase().includes('petunjuk') || nama.toLowerCase().includes('contoh')) {
+        continue;
+      }
+
+      const nip = nipCol !== -1 && row[nipCol] ? String(row[nipCol]).trim() : `19${Math.floor(10000000 + Math.random() * 90000000)}`;
+      const rawLp = lpCol !== -1 ? String(row[lpCol] || 'L').trim().toUpperCase() : 'L';
+      const gender: 'L' | 'P' = rawLp.startsWith('P') ? 'P' : 'L';
+      const ttl = ttlCol !== -1 && row[ttlCol] ? String(row[ttlCol]).trim() : '-';
+      const pendidikan = pddkCol !== -1 && row[pddkCol] ? String(row[pddkCol]).trim() : 'Sarjana (S1)';
+      const password = passCol !== -1 && row[passCol] ? String(row[passCol]).trim() : `GURU${Math.floor(1000 + Math.random() * 9000)}`;
+      const waliKelas = waliCol !== -1 && row[waliCol] ? String(row[waliCol]).trim() : '';
+      const jtmRaw = jtmCol !== -1 && row[jtmCol] ? parseInt(String(row[jtmCol])) : 24;
+      const jtm = isNaN(jtmRaw) ? 24 : jtmRaw;
+
+      guruList.push({
+        nip,
+        nama,
+        gender,
+        ttl,
+        pendidikan,
+        password,
+        waliKelas,
+        jtm,
+        mataPelajaranIds: [],
+        kelasIds: [],
+        status: 'Aktif',
+      });
+    }
+
+    if (guruList.length === 0) {
+      return { success: false, data: [], message: 'Tidak ada baris data guru yang valid dalam file.' };
+    }
+
+    return {
+      success: true,
+      data: guruList,
+      message: `Berhasil mengekstrak ${guruList.length} data guru dari file Excel.`,
+    };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Gagal memproses file Excel guru.';
+    return { success: false, data: [], message: errorMsg };
+  }
+}
+
+/**
+ * Export table of all teachers to Excel (.xlsx)
+ */
+export function exportGuruListToExcel(
+  guruList: Asatidz[],
+  allKelas: Kelas[],
+  allMapel: MataPelajaran[]
+) {
+  const wb = XLSX.utils.book_new();
+
+  const rows: (string | number)[][] = [
+    ['DAFTAR DEWAN GURU & ASATIDZ - PPTQ ALHUSNA'],
+    [`Tanggal Unduh: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}`],
+    [''],
+    ['NO', 'NIK / NUPTK', 'NAMA GURU', 'L/P', 'TEMPAT TANGGAL LAHIR', 'PENDIDIKAN', 'PASSWORD', 'WALI KELAS', 'JTM', 'MAPEL DIAMPU', 'STATUS'],
+  ];
+
+  guruList.forEach((guru, idx) => {
+    const mapelNames = guru.mataPelajaranIds
+      .map((id) => allMapel.find((m) => m.id === id)?.nama)
+      .filter(Boolean)
+      .join(', ') || '-';
+
+    rows.push([
+      idx + 1,
+      guru.nip || '-',
+      guru.nama,
+      guru.gender || 'L',
+      guru.ttl || '-',
+      guru.pendidikan || 'Sarjana (S1)',
+      guru.password || '******',
+      guru.waliKelas || '-',
+      guru.jtm || 24,
+      mapelNames,
+      guru.status || 'Aktif',
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  ws['!cols'] = [
+    { wch: 6 },
+    { wch: 22 },
+    { wch: 32 },
+    { wch: 8 },
+    { wch: 35 },
+    { wch: 18 },
+    { wch: 16 },
+    { wch: 28 },
+    { wch: 8 },
+    { wch: 35 },
+    { wch: 12 },
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Data_Guru');
+  XLSX.writeFile(wb, `Data_Guru_Asatidz_Alhusna_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+/**
+ * Export current class grading sheet to Excel
+ */
+export function exportClassGradesToExcel(
+  kelasNama: string,
+  mapelNama: string,
+  guruNama: string,
+  santriList: Santri[],
+  draftScores: Record<string, { harian: number; lisan: number; tulis: number; catatan?: string }>
+) {
+  const wb = XLSX.utils.book_new();
+
+  const rows: (string | number)[][] = [
+    ['PONDOK PESANTREN TAHFIDZUL QUR\'AN ALHUSNA'],
+    [`DAFTAR NILAI KELAS: ${kelasNama.toUpperCase()} | MAPEL: ${mapelNama.toUpperCase()}`],
+    [`Guru Pengampu: ${guruNama}`],
+    [`Tanggal Ekspor: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}`],
+    [''],
+    ['NO', 'NIS', 'NAMA SANTRI', 'NILAI HARIAN (20%)', 'UJIAN LISAN (30%)', 'UJIAN TULIS (50%)', 'NILAI AKHIR', 'PREDIKAT', 'CATATAN'],
+  ];
+
+  santriList.forEach((santri, idx) => {
+    const draft = draftScores[santri.id] || { harian: 80, lisan: 80, tulis: 80, catatan: '' };
+    const finalScore = Math.round(draft.harian * 0.2 + draft.lisan * 0.3 + draft.tulis * 0.5);
+    let predikat = 'Jayyid (C)';
+    if (finalScore >= 90) predikat = 'Mumtaz (A)';
+    else if (finalScore >= 80) predikat = 'Jayyid Jiddan (B)';
+    else if (finalScore >= 70) predikat = 'Jayyid (C)';
+    else if (finalScore >= 60) predikat = 'Maqbul (D)';
+    else predikat = 'Rasib (E)';
+
+    rows.push([
+      idx + 1,
+      santri.nis || '-',
+      santri.nama,
+      draft.harian,
+      draft.lisan,
+      draft.tulis,
+      finalScore,
+      predikat,
+      draft.catatan || '-',
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+
+  ws['!cols'] = [
+    { wch: 6 },
+    { wch: 14 },
+    { wch: 30 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 14 },
+    { wch: 20 },
+    { wch: 30 },
+  ];
+
+  const safeSheetName = `${kelasNama.slice(0, 15)}_${mapelNama.slice(0, 10)}`.replace(/[\/\\?*\[\]]/g, '_');
+  XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
+  XLSX.writeFile(wb, `Nilai_${kelasNama}_${mapelNama}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+
+

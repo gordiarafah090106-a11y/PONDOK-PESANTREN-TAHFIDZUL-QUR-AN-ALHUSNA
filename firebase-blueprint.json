@@ -1,0 +1,246 @@
+{
+  "entities": {
+    "PesantrenProfile": {
+      "title": "PesantrenProfile",
+      "description": "Informasi profil dan identitas Pondok Pesantren",
+      "type": "object",
+      "properties": {
+        "nama": { "type": "string", "maxLength": 200 },
+        "subTitle": { "type": "string", "maxLength": 200 },
+        "nspp": { "type": "string", "maxLength": 50 },
+        "skKemenag": { "type": "string", "maxLength": 100 },
+        "alamat": { "type": "string", "maxLength": 500 },
+        "desa": { "type": "string", "maxLength": 100 },
+        "kecamatan": { "type": "string", "maxLength": 100 },
+        "kabupaten": { "type": "string", "maxLength": 100 },
+        "provinsi": { "type": "string", "maxLength": 100 },
+        "noTelp": { "type": "string", "maxLength": 50 },
+        "email": { "type": "string", "maxLength": 150 },
+        "website": { "type": "string", "maxLength": 200 },
+        "logoUrl": { "type": "string", "maxLength": 2000000 },
+        "visi": { "type": "string", "maxLength": 1000 },
+        "misi": { "type": "array", "description": "Daftar butir misi pesantren" }
+      },
+      "required": ["nama", "nspp", "alamat"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Pengaturan keamanan dan hak akses peran aplikasi",
+      "type": "object",
+      "properties": {
+        "adminPassword": { "type": "string", "maxLength": 100 },
+        "permissions": { "type": "object", "description": "Matriks izin admin dan asatidz" },
+        "updatedAt": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["adminPassword"]
+    },
+    "AcademicTerm": {
+      "title": "AcademicTerm",
+      "description": "Periode semester dan tahun ajaran akademik",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "year": { "type": "string", "maxLength": 20 },
+        "semester": { "type": "string", "enum": ["ganjil", "genap"] },
+        "label": { "type": "string", "maxLength": 100 },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "year", "semester", "label", "isActive"]
+    },
+    "Petinggi": {
+      "title": "Petinggi",
+      "description": "Data Kyai, Pimpinan, dan Dewan Pembina Pesantren",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "nama": { "type": "string", "maxLength": 150 },
+        "gelar": { "type": "string", "maxLength": 100 },
+        "jabatan": { "type": "string", "maxLength": 150 },
+        "kontak": { "type": "string", "maxLength": 50 },
+        "foto": { "type": "string", "maxLength": 2000000 },
+        "urutan": { "type": "number" }
+      },
+      "required": ["id", "nama", "jabatan", "urutan"]
+    },
+    "PanitiaUjian": {
+      "title": "PanitiaUjian",
+      "description": "Susunan panitia pelaksana ujian santri",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "nama": { "type": "string", "maxLength": 150 },
+        "jabatan": { "type": "string", "maxLength": 150 },
+        "tugas": { "type": "string", "maxLength": 500 },
+        "kontak": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "nama", "jabatan", "tugas"]
+    },
+    "MataPelajaran": {
+      "title": "MataPelajaran",
+      "description": "Mata pelajaran kurikulum pesantren",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "kode": { "type": "string", "maxLength": 50 },
+        "nama": { "type": "string", "maxLength": 150 },
+        "kategori": { "type": "string", "enum": ["Tahfidz", "Diniyyah", "Umum", "Bahasa"] },
+        "kkm": { "type": "number" }
+      },
+      "required": ["id", "kode", "nama", "kategori", "kkm"]
+    },
+    "Kelas": {
+      "title": "Kelas",
+      "description": "Rombongan belajar atau kelas santri",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "nama": { "type": "string", "maxLength": 100 },
+        "tingkat": { "type": "string", "maxLength": 50 },
+        "waliKelas": { "type": "string", "maxLength": 150 },
+        "kapasitas": { "type": "number" }
+      },
+      "required": ["id", "nama", "tingkat"]
+    },
+    "Santri": {
+      "title": "Santri",
+      "description": "Data santriwan dan santriwati pesantren",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "nis": { "type": "string", "maxLength": 50 },
+        "nama": { "type": "string", "maxLength": 150 },
+        "jenisKelamin": { "type": "string", "enum": ["L", "P"] },
+        "kelasId": { "type": "string", "maxLength": 100 },
+        "halaqah": { "type": "string", "maxLength": 100 },
+        "kamar": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["Aktif", "Non-Aktif"] }
+      },
+      "required": ["id", "nis", "nama", "jenisKelamin", "kelasId", "status"]
+    },
+    "Asatidz": {
+      "title": "Asatidz",
+      "description": "Data akun dewan guru dan ustadz pengampu",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "nip": { "type": "string", "maxLength": 50 },
+        "nama": { "type": "string", "maxLength": 150 },
+        "gender": { "type": "string", "maxLength": 10 },
+        "ttl": { "type": "string", "maxLength": 150 },
+        "pendidikan": { "type": "string", "maxLength": 100 },
+        "password": { "type": "string", "maxLength": 100 },
+        "waliKelas": { "type": "string", "maxLength": 100 },
+        "jtm": { "type": "number" },
+        "mataPelajaranIds": { "type": "array" },
+        "kelasIds": { "type": "array" },
+        "noHp": { "type": "string", "maxLength": 50 },
+        "email": { "type": "string", "maxLength": 150 },
+        "kontak": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "nama", "mataPelajaranIds", "kelasIds"]
+    },
+    "NilaiSantri": {
+      "title": "NilaiSantri",
+      "description": "Data rekapitulasi nilai ujian santri",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "termId": { "type": "string", "maxLength": 100 },
+        "santriId": { "type": "string", "maxLength": 100 },
+        "kelasId": { "type": "string", "maxLength": 100 },
+        "mapelId": { "type": "string", "maxLength": 100 },
+        "asatidzId": { "type": "string", "maxLength": 100 },
+        "nilaiHarian": { "type": "number" },
+        "nilaiLisan": { "type": "number" },
+        "nilaiTulis": { "type": "number" },
+        "nilaiAkhir": { "type": "number" },
+        "predikat": { "type": "string", "maxLength": 20 },
+        "catatan": { "type": "string", "maxLength": 500 },
+        "tanggalInput": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "termId", "santriId", "kelasId", "mapelId", "nilaiAkhir", "predikat"]
+    },
+    "JadwalUjianItem": {
+      "title": "JadwalUjianItem",
+      "description": "Gambar dan berkas pengumuman jadwal ujian PDF / Image",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "termId": { "type": "string", "maxLength": 100 },
+        "judul": { "type": "string", "maxLength": 200 },
+        "tanggalUjian": { "type": "string", "maxLength": 100 },
+        "imageUrl": { "type": "string", "maxLength": 2000000 },
+        "fileName": { "type": "string", "maxLength": 200 },
+        "fileType": { "type": "string", "maxLength": 50 },
+        "keterangan": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "termId", "judul", "imageUrl"]
+    },
+    "Pengumuman": {
+      "title": "Pengumuman",
+      "description": "Papan pengumuman dan edaran resmi pesantren untuk admin dan asatidz",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "judul": { "type": "string", "maxLength": 200 },
+        "kategori": { "type": "string", "maxLength": 50 },
+        "konten": { "type": "string", "maxLength": 5000 },
+        "tanggal": { "type": "string", "maxLength": 100 },
+        "penulis": { "type": "string", "maxLength": 100 },
+        "pinned": { "type": "boolean" }
+      },
+      "required": ["id", "judul", "konten", "tanggal", "penulis"]
+    }
+  },
+  "firestore": {
+    "/pesantrenProfile/{docId}": {
+      "schema": { "$ref": "#/entities/PesantrenProfile" },
+      "description": "Dokumen profil pesantren"
+    },
+    "/settings/{docId}": {
+      "schema": { "$ref": "#/entities/AppSettings" },
+      "description": "Dokumen konfigurasi admin dan hak akses"
+    },
+    "/academicTerms/{termId}": {
+      "schema": { "$ref": "#/entities/AcademicTerm" },
+      "description": "Daftar semester dan tahun ajaran"
+    },
+    "/petinggi/{petinggiId}": {
+      "schema": { "$ref": "#/entities/Petinggi" },
+      "description": "Daftar pimpinan dan dewan kyai"
+    },
+    "/panitiaUjian/{panitiaId}": {
+      "schema": { "$ref": "#/entities/PanitiaUjian" },
+      "description": "Daftar panitia pelaksana ujian"
+    },
+    "/mataPelajaran/{mapelId}": {
+      "schema": { "$ref": "#/entities/MataPelajaran" },
+      "description": "Daftar mata pelajaran"
+    },
+    "/kelas/{kelasId}": {
+      "schema": { "$ref": "#/entities/Kelas" },
+      "description": "Daftar kelas santri"
+    },
+    "/santri/{santriId}": {
+      "schema": { "$ref": "#/entities/Santri" },
+      "description": "Daftar santri"
+    },
+    "/asatidz/{asatidzId}": {
+      "schema": { "$ref": "#/entities/Asatidz" },
+      "description": "Daftar dewan guru dan akun asatidz"
+    },
+    "/nilaiSantri/{nilaiId}": {
+      "schema": { "$ref": "#/entities/NilaiSantri" },
+      "description": "Daftar nilai ujian santri"
+    },
+    "/jadwalUjian/{jadwalId}": {
+      "schema": { "$ref": "#/entities/JadwalUjianItem" },
+      "description": "Daftar berkas jadwal ujian"
+    },
+    "/pengumuman/{pengumumanId}": {
+      "schema": { "$ref": "#/entities/Pengumuman" },
+      "description": "Daftar pengumuman resmi pesantren"
+    }
+  }
+}

@@ -36,6 +36,8 @@ interface RekapanViewProps {
   allAsatidz: Asatidz[];
   profile: PesantrenProfile;
   currentRole: RoleType;
+  activeSubTab?: string;
+  onSelectSubTab?: (tab: string) => void;
 }
 
 export const RekapanView: React.FC<RekapanViewProps> = ({
@@ -47,6 +49,8 @@ export const RekapanView: React.FC<RekapanViewProps> = ({
   allAsatidz,
   profile,
   currentRole,
+  activeSubTab = 'rekap_guru',
+  onSelectSubTab,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGuruPreview, setSelectedGuruPreview] = useState<Asatidz | null>(null);

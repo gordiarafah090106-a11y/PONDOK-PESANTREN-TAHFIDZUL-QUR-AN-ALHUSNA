@@ -12,6 +12,7 @@ import {
   RolePermissions,
   RoleType,
   Santri,
+  Pengumuman,
 } from './types';
 import {
   INITIAL_TERMS,
@@ -25,7 +26,35 @@ import {
   INITIAL_NILAI,
   INITIAL_JADWAL,
   INITIAL_PERMISSIONS,
+  INITIAL_PENGUMUMAN,
 } from './data/initialData';
+import {
+  seedInitialDataIfEmpty,
+  subscribePesantrenProfile,
+  subscribeAppSettings,
+  subscribeAcademicTerms,
+  subscribePetinggi,
+  subscribePanitiaUjian,
+  subscribeMataPelajaran,
+  subscribeKelas,
+  subscribeSantri,
+  subscribeAsatidz,
+  subscribeNilaiSantri,
+  subscribeJadwalUjian,
+  subscribePengumuman,
+  savePesantrenProfileToCloud,
+  saveAppSettingsToCloud,
+  saveAcademicTermsToCloud,
+  savePetinggiListToCloud,
+  savePanitiaListToCloud,
+  saveMapelListToCloud,
+  saveKelasListToCloud,
+  saveSantriListToCloud,
+  saveAsatidzListToCloud,
+  saveNilaiBatchToCloud,
+  saveJadwalListToCloud,
+  savePengumumanListToCloud,
+} from './services/firestoreService';
 import { Sidebar, TabKey } from './components/Sidebar';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
 import { DashboardView } from './components/DashboardView';
@@ -33,10 +62,21 @@ import { ProfilPesantrenView } from './components/ProfilPesantrenView';
 import { LembagaView } from './components/LembagaView';
 import { AsatidzView } from './components/AsatidzView';
 import { RekapanView } from './components/RekapanView';
-import { Menu, Shield, GraduationCap, Calendar, Lock } from 'lucide-react';
+import { LoginView } from './components/LoginView';
+import { Menu, Shield, GraduationCap, Lock, Cloud, CloudCheck, RefreshCw, LogOut } from 'lucide-react';
 
 export default function App() {
-  // --- Persistent States (with localStorage) ---
+  // --- Cloud Sync Status ---
+  const [isCloudReady, setIsCloudReady] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(true);
+
+  // --- Authentication State ---
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
+    const saved = localStorage.getItem('alhusna_logged_in');
+    return saved === 'true';
+  });
+
+  // --- States (Initialized from cache / initial data, synced via Firestore Real-Time) ---
   const [allTerms, setAllTerms] = useState<AcademicTerm[]>(() => {
     const saved = localStorage.getItem('alhusna_terms');
     return saved ? JSON.parse(saved) : INITIAL_TERMS;
@@ -115,69 +155,237 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_JADWAL;
   });
 
-  // Current active navigation tab (all moved to left sidebar)
+  const [allPengumuman, setAllPengumuman] = useState<Pengumuman[]>(() => {
+    const saved = localStorage.getItem('alhusna_pengumuman');
+    return saved ? JSON.parse(saved) : INITIAL_PENGUMUMAN;
+  });
+
+  // Current active navigation tab & sub-tab
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
+  const [activeSubTab, setActiveSubTab] = useState<string>('petinggi');
 
-  // --- Save to LocalStorage effects ---
-  useEffect(() => {
-    localStorage.setItem('alhusna_terms', JSON.stringify(allTerms));
-  }, [allTerms]);
+  const handleSelectTab = (tab: TabKey, subTab?: string) => {
+    setActiveTab(tab);
+    if (subTab) {
+      setActiveSubTab(subTab);
+    } else {
+      if (tab === 'dashboard') setActiveSubTab('ringkasan');
+      else if (tab === 'profil') setActiveSubTab('petinggi');
+      else if (tab === 'lembaga') setActiveSubTab('kelas');
+      else if (tab === 'asatidz') setActiveSubTab(currentRole === 'admin' ? 'akun' : 'mengajar');
+      else if (tab === 'rekapan') setActiveSubTab('rekap_guru');
+    }
+  };
 
+  // --- Real-time Firestore Cloud Synchronization ---
   useEffect(() => {
-    localStorage.setItem('alhusna_current_term', JSON.stringify(currentTerm));
-  }, [currentTerm]);
+    let isMounted = true;
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_current_role', currentRole);
-  }, [currentRole]);
+    async function initCloud() {
+      try {
+        setIsSyncing(true);
+        await seedInitialDataIfEmpty();
+        if (isMounted) {
+          setIsCloudReady(true);
+          setIsSyncing(false);
+        }
+      } catch (err) {
+        console.warn('Firebase init/seed info:', err);
+        if (isMounted) {
+          setIsCloudReady(true);
+          setIsSyncing(false);
+        }
+      }
+    }
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_admin_password', adminPassword);
-  }, [adminPassword]);
+    initCloud();
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_asatidz', JSON.stringify(allAsatidz));
-  }, [allAsatidz]);
+    // 1. Profile listener
+    const unsubProfile = subscribePesantrenProfile((data) => {
+      if (data && data.nama) {
+        setProfile(data);
+        localStorage.setItem('alhusna_profile', JSON.stringify(data));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_active_asatidz', JSON.stringify(currentActiveAsatidz));
-  }, [currentActiveAsatidz]);
+    // 2. Settings & Security listener
+    const unsubSettings = subscribeAppSettings((data) => {
+      if (data?.adminPassword) {
+        setAdminPassword(data.adminPassword);
+        localStorage.setItem('alhusna_admin_password', data.adminPassword);
+      }
+      if (data?.permissions) {
+        setPermissions(data.permissions);
+        localStorage.setItem('alhusna_permissions', JSON.stringify(data.permissions));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_profile', JSON.stringify(profile));
-  }, [profile]);
+    // 3. Academic Terms listener
+    const unsubTerms = subscribeAcademicTerms((data) => {
+      if (data && data.length > 0) {
+        setAllTerms(data);
+        localStorage.setItem('alhusna_terms', JSON.stringify(data));
+        const active = data.find((t) => t.isActive);
+        if (active) {
+          setCurrentTerm(active);
+          localStorage.setItem('alhusna_current_term', JSON.stringify(active));
+        }
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_petinggi', JSON.stringify(petinggiList));
-  }, [petinggiList]);
+    // 4. Petinggi listener
+    const unsubPetinggi = subscribePetinggi((data) => {
+      if (data) {
+        setPetinggiList(data);
+        localStorage.setItem('alhusna_petinggi', JSON.stringify(data));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_panitia', JSON.stringify(panitiaList));
-  }, [panitiaList]);
+    // 5. Panitia listener
+    const unsubPanitia = subscribePanitiaUjian((data) => {
+      if (data) {
+        setPanitiaList(data);
+        localStorage.setItem('alhusna_panitia', JSON.stringify(data));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_permissions', JSON.stringify(permissions));
-  }, [permissions]);
+    // 6. Mata Pelajaran listener
+    const unsubMapel = subscribeMataPelajaran((data) => {
+      if (data) {
+        setAllMapel(data);
+        localStorage.setItem('alhusna_mapel', JSON.stringify(data));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_mapel', JSON.stringify(allMapel));
-  }, [allMapel]);
+    // 7. Kelas listener
+    const unsubKelas = subscribeKelas((data) => {
+      if (data) {
+        setAllKelas(data);
+        localStorage.setItem('alhusna_kelas', JSON.stringify(data));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_kelas', JSON.stringify(allKelas));
-  }, [allKelas]);
+    // 8. Santri listener
+    const unsubSantri = subscribeSantri((data) => {
+      if (data) {
+        setAllSantri(data);
+        localStorage.setItem('alhusna_santri', JSON.stringify(data));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_santri', JSON.stringify(allSantri));
-  }, [allSantri]);
+    // 9. Asatidz listener
+    const unsubAsatidz = subscribeAsatidz((data) => {
+      if (data) {
+        setAllAsatidz(data);
+        localStorage.setItem('alhusna_asatidz', JSON.stringify(data));
+        setCurrentActiveAsatidz((prev) => {
+          if (!prev) return data[0] || null;
+          return data.find((a) => a.id === prev.id) || data[0] || null;
+        });
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_nilai', JSON.stringify(allNilai));
-  }, [allNilai]);
+    // 10. Nilai Santri listener
+    const unsubNilai = subscribeNilaiSantri((data) => {
+      if (data) {
+        setAllNilai(data);
+        localStorage.setItem('alhusna_nilai', JSON.stringify(data));
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('alhusna_jadwal', JSON.stringify(allJadwal));
-  }, [allJadwal]);
+    // 11. Jadwal Ujian listener
+    const unsubJadwal = subscribeJadwalUjian((data) => {
+      if (data) {
+        setAllJadwal(data);
+        localStorage.setItem('alhusna_jadwal', JSON.stringify(data));
+      }
+    });
+
+    // 12. Pengumuman listener
+    const unsubPengumuman = subscribePengumuman((data) => {
+      if (data) {
+        setAllPengumuman(data);
+        localStorage.setItem('alhusna_pengumuman', JSON.stringify(data));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubProfile();
+      unsubSettings();
+      unsubTerms();
+      unsubPetinggi();
+      unsubPanitia();
+      unsubMapel();
+      unsubKelas();
+      unsubSantri();
+      unsubAsatidz();
+      unsubNilai();
+      unsubJadwal();
+      unsubPengumuman();
+    };
+  }, []);
+
+  // --- Synchronized Cloud Mutation Handlers ---
+  const handleUpdateProfile = (newProfile: PesantrenProfile) => {
+    setProfile(newProfile);
+    savePesantrenProfileToCloud(newProfile).catch(console.error);
+  };
+
+  const handleUpdatePetinggi = (list: Petinggi[]) => {
+    setPetinggiList(list);
+    savePetinggiListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdatePanitia = (list: PanitiaUjian[]) => {
+    setPanitiaList(list);
+    savePanitiaListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdatePermissions = (perms: { admin: RolePermissions; asatidz: RolePermissions }) => {
+    setPermissions(perms);
+    saveAppSettingsToCloud({ permissions: perms }).catch(console.error);
+  };
+
+  const handleUpdateAdminPassword = (newPassword: string) => {
+    setAdminPassword(newPassword);
+    saveAppSettingsToCloud({ adminPassword: newPassword }).catch(console.error);
+  };
+
+  const handleUpdateMapel = (list: MataPelajaran[]) => {
+    setAllMapel(list);
+    saveMapelListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdateKelas = (list: Kelas[]) => {
+    setAllKelas(list);
+    saveKelasListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdateSantri = (list: Santri[]) => {
+    setAllSantri(list);
+    saveSantriListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdateAsatidz = (list: Asatidz[]) => {
+    setAllAsatidz(list);
+    saveAsatidzListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdateJadwal = (list: JadwalUjianItem[]) => {
+    setAllJadwal(list);
+    saveJadwalListToCloud(list).catch(console.error);
+  };
+
+  const handleSavePengumuman = (list: Pengumuman[]) => {
+    setAllPengumuman(list);
+    savePengumumanListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdateTerms = (list: AcademicTerm[]) => {
+    setAllTerms(list);
+    saveAcademicTermsToCloud(list).catch(console.error);
+  };
 
   // Handle switching academic term
   const handleSelectTerm = (selectedTerm: AcademicTerm) => {
@@ -187,10 +395,13 @@ export default function App() {
     }));
     setAllTerms(updated);
     setCurrentTerm({ ...selectedTerm, isActive: true });
+    saveAcademicTermsToCloud(updated).catch(console.error);
   };
 
   const handleAddTerm = (newTerm: AcademicTerm) => {
-    setAllTerms((prev) => [...prev, newTerm]);
+    const updated = [...allTerms, newTerm];
+    setAllTerms(updated);
+    saveAcademicTermsToCloud(updated).catch(console.error);
   };
 
   // Batch save or update grades from Asatidz form
@@ -201,6 +412,7 @@ export default function App() {
       );
       return [...filtered, ...savedBatch];
     });
+    saveNilaiBatchToCloud(savedBatch).catch(console.error);
   };
 
   // Switch Role logic
@@ -211,20 +423,56 @@ export default function App() {
 
   const handleSuccessAdminAuth = () => {
     setCurrentRole('admin');
+    localStorage.setItem('alhusna_current_role', 'admin');
     setIsAdminModalOpen(false);
   };
 
   const handleSwitchToAsatidz = () => {
     setCurrentRole('asatidz');
+    localStorage.setItem('alhusna_current_role', 'asatidz');
   };
 
+  const handleLoginSuccess = (role: RoleType, asatidzAccount?: Asatidz) => {
+    setCurrentRole(role);
+    localStorage.setItem('alhusna_current_role', role);
+    if (role === 'asatidz' && asatidzAccount) {
+      setCurrentActiveAsatidz(asatidzAccount);
+      localStorage.setItem('alhusna_active_asatidz', JSON.stringify(asatidzAccount));
+    }
+    setIsLoggedIn(true);
+    localStorage.setItem('alhusna_logged_in', 'true');
+    setActiveTab('dashboard');
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    localStorage.removeItem('alhusna_logged_in');
+  };
+
+  // If user is not authenticated yet, render the Login Screen first
+  if (!isLoggedIn) {
+    return (
+      <LoginView
+        profile={profile}
+        currentTerm={currentTerm}
+        allTerms={allTerms}
+        onSelectTerm={handleSelectTerm}
+        adminPassword={adminPassword}
+        allAsatidz={allAsatidz}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen flex bg-slate-100/70 text-slate-900 selection:bg-emerald-200 selection:text-emerald-900">
+    <div className="h-screen overflow-hidden flex bg-slate-100/70 text-slate-900 selection:bg-emerald-200 selection:text-emerald-900">
       
-      {/* 1. LEFT SIDEBAR (All features moved to left side of app) */}
+      {/* 1. LEFT SIDEBAR */}
       <Sidebar
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
+        activeSubTab={activeSubTab}
+        onSelectTab={handleSelectTab}
+        onSelectSubTab={setActiveSubTab}
         currentRole={currentRole}
         onSwitchToAdmin={handleRequestSwitchToAdmin}
         onSwitchToAsatidz={handleSwitchToAsatidz}
@@ -238,10 +486,16 @@ export default function App() {
         onSelectAsatidz={setCurrentActiveAsatidz}
         isMobileOpen={isMobileSidebarOpen}
         setIsMobileOpen={setIsMobileSidebarOpen}
+        onLogout={handleLogout}
+        petinggiCount={petinggiList.length}
+        panitiaCount={panitiaList.length}
+        kelasCount={allKelas.length}
+        mapelCount={allMapel.length}
+        jadwalCount={allJadwal.length}
       />
 
       {/* 2. MAIN CONTENT AREA */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto main-content-scroll h-screen">
         
         {/* Top bar on main area for mobile hamburger & current status */}
         <header className="bg-white border-b border-slate-200/80 px-4 sm:px-6 py-3 flex items-center justify-between sticky top-0 z-30 shadow-xs">
@@ -265,7 +519,31 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Cloud Real-Time Indicator */}
+            <div
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition border ${
+                isCloudReady
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-amber-50 text-amber-800 border-amber-200'
+              }`}
+              title="Status koneksi database Firebase Cloud realtime"
+            >
+              {isSyncing ? (
+                <>
+                  <RefreshCw className="w-3 h-3 text-emerald-600 animate-spin" />
+                  <span className="hidden md:inline">Sinkronisasi Cloud...</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <Cloud className="w-3.5 h-3.5 text-emerald-700" />
+                  <span className="hidden md:inline">Cloud Real-Time</span>
+                  <span className="md:hidden">Cloud</span>
+                </>
+              )}
+            </div>
+
             {/* Active Role Pill */}
             {currentRole === 'admin' ? (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-800 text-white text-xs font-bold shadow-xs">
@@ -294,6 +572,16 @@ export default function App() {
                 <span className="hidden md:inline">Masuk Admin</span>
               </button>
             )}
+
+            {/* Logout button */}
+            <button
+              onClick={handleLogout}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 text-xs font-semibold border border-slate-200 transition"
+              title="Keluar / Logout"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Keluar</span>
+            </button>
           </div>
         </header>
 
@@ -303,31 +591,38 @@ export default function App() {
             <DashboardView
               profile={profile}
               currentTerm={currentTerm}
-              allTerms={allTerms}
-              onSelectTerm={handleSelectTerm}
               allSantri={allSantri}
               allKelas={allKelas}
               allMapel={allMapel}
               allAsatidz={allAsatidz}
               allNilai={allNilai}
+              allPengumuman={allPengumuman}
+              onSavePengumuman={handleSavePengumuman}
               currentRole={currentRole}
-              onNavigate={setActiveTab}
+              currentTeacherAccount={currentActiveAsatidz}
+              onNavigate={(tab) => handleSelectTab(tab)}
             />
           )}
 
           {activeTab === 'profil' && (
             <ProfilPesantrenView
               profile={profile}
-              onUpdateProfile={setProfile}
+              onUpdateProfile={handleUpdateProfile}
               petinggiList={petinggiList}
-              onUpdatePetinggi={setPetinggiList}
+              onUpdatePetinggi={handleUpdatePetinggi}
               panitiaList={panitiaList}
-              onUpdatePanitia={setPanitiaList}
+              onUpdatePanitia={handleUpdatePanitia}
               permissions={permissions}
-              onUpdatePermissions={setPermissions}
+              onUpdatePermissions={handleUpdatePermissions}
               currentRole={currentRole}
               adminPassword={adminPassword}
-              onUpdateAdminPassword={setAdminPassword}
+              onUpdateAdminPassword={handleUpdateAdminPassword}
+              allTerms={allTerms}
+              currentTerm={currentTerm}
+              onSelectTerm={handleSelectTerm}
+              onUpdateTerms={handleUpdateTerms}
+              activeSubTab={activeSubTab}
+              onSelectSubTab={(sub) => setActiveSubTab(sub)}
             />
           )}
 
@@ -335,14 +630,16 @@ export default function App() {
             <LembagaView
               currentTerm={currentTerm}
               allMapel={allMapel}
-              onUpdateMapel={setAllMapel}
+              onUpdateMapel={handleUpdateMapel}
               allKelas={allKelas}
-              onUpdateKelas={setAllKelas}
+              onUpdateKelas={handleUpdateKelas}
               allSantri={allSantri}
-              onUpdateSantri={setAllSantri}
+              onUpdateSantri={handleUpdateSantri}
               allJadwal={allJadwal}
-              onUpdateJadwal={setAllJadwal}
+              onUpdateJadwal={handleUpdateJadwal}
               currentRole={currentRole}
+              activeSubTab={activeSubTab}
+              onSelectSubTab={(sub) => setActiveSubTab(sub)}
             />
           )}
 
@@ -350,7 +647,7 @@ export default function App() {
             <AsatidzView
               currentTerm={currentTerm}
               allAsatidz={allAsatidz}
-              onUpdateAsatidz={setAllAsatidz}
+              onUpdateAsatidz={handleUpdateAsatidz}
               allKelas={allKelas}
               allMapel={allMapel}
               allSantri={allSantri}
@@ -359,7 +656,9 @@ export default function App() {
               currentRole={currentRole}
               currentActiveAsatidz={currentActiveAsatidz}
               onSelectActiveAsatidz={setCurrentActiveAsatidz}
-              onNavigateToRekap={() => setActiveTab('rekapan')}
+              onNavigateToRekap={() => handleSelectTab('rekapan')}
+              activeSubTab={activeSubTab}
+              onSelectSubTab={(sub) => setActiveSubTab(sub)}
             />
           )}
 
@@ -373,6 +672,8 @@ export default function App() {
               allAsatidz={allAsatidz}
               profile={profile}
               currentRole={currentRole}
+              activeSubTab={activeSubTab}
+              onSelectSubTab={(sub) => setActiveSubTab(sub)}
             />
           )}
         </main>
@@ -384,6 +685,11 @@ export default function App() {
               <span className="font-bold text-slate-800">{profile.nama}</span>
               <span>•</span>
               <span>{profile.kabupaten}, {profile.provinsi}</span>
+              <span>•</span>
+              <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                Firebase Real-Time DB
+              </span>
             </div>
             <div className="text-[11px] text-slate-400">
               Sistem Penilaian Imtihan Niha&apos;i — Semester {currentTerm.label}
@@ -402,3 +708,4 @@ export default function App() {
     </div>
   );
 }
+
