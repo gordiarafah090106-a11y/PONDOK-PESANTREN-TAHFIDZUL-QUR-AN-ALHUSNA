@@ -113,7 +113,8 @@
         "kelasId": { "type": "string", "maxLength": 100 },
         "halaqah": { "type": "string", "maxLength": 100 },
         "kamar": { "type": "string", "maxLength": 100 },
-        "status": { "type": "string", "enum": ["Aktif", "Non-Aktif"] }
+        "status": { "type": "string", "enum": ["Aktif", "Non-Aktif"] },
+        "kepribadian": { "type": "object", "description": "Data penilaian kepribadian, kehadiran, tahfidz, dan catatan wali kelas santri" }
       },
       "required": ["id", "nis", "nama", "jenisKelamin", "kelasId", "status"]
     },
@@ -191,6 +192,35 @@
         "pinned": { "type": "boolean" }
       },
       "required": ["id", "judul", "konten", "tanggal", "penulis"]
+    },
+    "TugasMengajarItem": {
+      "title": "TugasMengajarItem",
+      "description": "Penugasan guru pengampu mata pelajaran pada tingkat/kelas tertentu",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "tingkat": { "type": "string", "maxLength": 100 },
+        "mapelNama": { "type": "string", "maxLength": 150 },
+        "asatidzId": { "type": "string", "maxLength": 100 },
+        "kitab": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["id", "tingkat", "mapelNama", "asatidzId"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Data akun administrator aplikasi",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 100 },
+        "username": { "type": "string", "maxLength": 100 },
+        "nama": { "type": "string", "maxLength": 150 },
+        "jabatan": { "type": "string", "maxLength": 150 },
+        "password": { "type": "string", "maxLength": 100 },
+        "noHp": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["Aktif", "Nonaktif"] },
+        "isSuperAdmin": { "type": "boolean" }
+      },
+      "required": ["id", "username", "nama", "password", "status"]
     }
   },
   "firestore": {
@@ -241,6 +271,14 @@
     "/pengumuman/{pengumumanId}": {
       "schema": { "$ref": "#/entities/Pengumuman" },
       "description": "Daftar pengumuman resmi pesantren"
+    },
+    "/tugasMengajar/{tugasId}": {
+      "schema": { "$ref": "#/entities/TugasMengajarItem" },
+      "description": "Daftar penugasan mengajar guru"
+    },
+    "/adminUsers/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Daftar akun administrator aplikasi"
     }
   }
 }

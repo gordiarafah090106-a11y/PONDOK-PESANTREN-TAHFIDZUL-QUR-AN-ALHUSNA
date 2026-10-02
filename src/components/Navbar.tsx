@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { RoleType } from '../types';
 
-export type TabKey = 'dashboard' | 'profil' | 'lembaga' | 'asatidz' | 'rekapan';
+export type TabKey = 'dashboard' | 'profil' | 'lembaga' | 'asatidz' | 'rekapan' | 'input_nilai';
 
 interface NavbarProps {
   activeTab: TabKey;

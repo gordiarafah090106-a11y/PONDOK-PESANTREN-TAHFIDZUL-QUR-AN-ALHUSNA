@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   AcademicTerm,
   PesantrenProfile,
@@ -6,6 +6,7 @@ import {
   PanitiaUjian,
   RolePermissions,
   RoleType,
+  AdminUser,
 } from '../types';
 import {
   Landmark,
@@ -27,7 +28,17 @@ import {
   Sparkles,
   AlertCircle,
   Check,
+  Copy,
+  Printer,
+  FileSpreadsheet,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  User as UserIcon,
 } from 'lucide-react';
+import { ConfirmModal } from './ConfirmModal';
 
 interface ProfilPesantrenViewProps {
   profile: PesantrenProfile;
@@ -45,6 +56,8 @@ interface ProfilPesantrenViewProps {
   currentRole: RoleType;
   adminPassword?: string;
   onUpdateAdminPassword?: (newPassword: string) => void;
+  allAdminUsers?: AdminUser[];
+  onUpdateAdminUsers?: (updated: AdminUser[]) => void;
   activeSubTab?: string;
   onSelectSubTab?: (sub: 'petinggi' | 'panitia' | 'semester' | 'identitas' | 'keamanan' | 'akses') => void;
 }
@@ -65,12 +78,23 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
   currentRole,
   adminPassword = 'admin123',
   onUpdateAdminPassword,
+  allAdminUsers = [],
+  onUpdateAdminUsers,
   activeSubTab: propSubTab,
   onSelectSubTab,
 }) => {
   const isAdmin = currentRole === 'admin';
   const [internalSubTab, setInternalSubTab] = useState<'petinggi' | 'panitia' | 'semester' | 'identitas' | 'keamanan' | 'akses'>('petinggi');
-  const activeSubTab = (propSubTab as 'petinggi' | 'panitia' | 'semester' | 'identitas' | 'keamanan' | 'akses') || internalSubTab;
+  const validSubTabs = isAdmin
+    ? ['petinggi', 'panitia', 'semester', 'identitas', 'keamanan', 'akses']
+    : ['petinggi', 'panitia'];
+  const activeSubTab = (
+    propSubTab && validSubTabs.includes(propSubTab)
+      ? propSubTab
+      : validSubTabs.includes(internalSubTab)
+      ? internalSubTab
+      : 'petinggi'
+  ) as 'petinggi' | 'panitia' | 'semester' | 'identitas' | 'keamanan' | 'akses';
   const setActiveSubTab = (tab: 'petinggi' | 'panitia' | 'semester' | 'identitas' | 'keamanan' | 'akses') => {
     setInternalSubTab(tab);
     if (onSelectSubTab) onSelectSubTab(tab);
@@ -102,6 +126,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
 
   // Semester Modal State
   const [semesterModalOpen, setSemesterModalOpen] = useState(false);
+  const [editingSemester, setEditingSemester] = useState<AcademicTerm | null>(null);
   const [semesterForm, setSemesterForm] = useState({
     year: '2025/2026',
     semester: 'ganjil' as 'ganjil' | 'genap',
@@ -109,14 +134,23 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
     isActive: false,
   });
 
-  // --- Password Management State (Admin Only) ---
-  const [oldPasswordInput, setOldPasswordInput] = useState('');
-  const [newPasswordInput, setNewPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
-  const [showOldPass, setShowOldPass] = useState(false);
-  const [showNewPass, setShowNewPass] = useState(false);
-  const [showConfirmPass, setShowConfirmPass] = useState(false);
-  const [passwordNotice, setPasswordNotice] = useState<{ success?: boolean; message?: string } | null>(null);
+  // --- ADMIN APLIKASI (Data Admin RDM) State ---
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminPageSize, setAdminPageSize] = useState<number>(10);
+  const [adminCurrentPage, setAdminCurrentPage] = useState<number>(1);
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState<AdminUser | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState(false);
+
+  const [adminForm, setAdminForm] = useState<Omit<AdminUser, 'id'>>({
+    email: '',
+    nama: '',
+    gender: 'L',
+    ttl: '',
+    pendidikan: 'Staf Madrasah',
+    password: '',
+    foto: '',
+  });
 
   // Handle Logo Upload
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -131,6 +165,14 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
     }
   };
 
+  // State for in-app deletion confirmation modal
+  const [confirmDelete, setConfirmDelete] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
   // Save Pimpinan
   const handleSavePetinggi = (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,7 +183,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
       onUpdatePetinggi(updated);
     } else {
       const newPetinggi: Petinggi = {
-        id: `pet-${Date.now()}`,
+        id: `petinggi-${Date.now()}`,
         ...petinggiForm,
       };
       onUpdatePetinggi([...petinggiList, newPetinggi]);
@@ -150,10 +192,16 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
     setEditingPetinggi(null);
   };
 
-  const handleDeletePetinggi = (id: string) => {
-    if (window.confirm('Yakin ingin menghapus data Pimpinan Pesantren ini?')) {
-      onUpdatePetinggi(petinggiList.filter((p) => p.id !== id));
-    }
+  const handleDeletePetinggi = (id: string, nama: string) => {
+    setConfirmDelete({
+      isOpen: true,
+      title: 'Hapus Data Pimpinan',
+      message: `Apakah Anda yakin ingin menghapus "${nama}" dari daftar Pimpinan Pesantren?`,
+      onConfirm: () => {
+        const updated = petinggiList.filter((p) => p.id !== id);
+        onUpdatePetinggi(updated);
+      },
+    });
   };
 
   // Save Panitia
@@ -166,7 +214,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
       onUpdatePanitia(updated);
     } else {
       const newPanitia: PanitiaUjian = {
-        id: `pan-${Date.now()}`,
+        id: `panitia-${Date.now()}`,
         ...panitiaForm,
       };
       onUpdatePanitia([...panitiaList, newPanitia]);
@@ -175,34 +223,61 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
     setEditingPanitia(null);
   };
 
-  const handleDeletePanitia = (id: string) => {
-    if (window.confirm('Yakin ingin menghapus nama panitia ujian ini?')) {
-      onUpdatePanitia(panitiaList.filter((p) => p.id !== id));
-    }
+  const handleDeletePanitia = (id: string, nama: string) => {
+    setConfirmDelete({
+      isOpen: true,
+      title: 'Hapus Anggota Panitia',
+      message: `Apakah Anda yakin ingin menghapus "${nama}" dari susunan Panitia Ujian?`,
+      onConfirm: () => {
+        const updated = panitiaList.filter((p) => p.id !== id);
+        onUpdatePanitia(updated);
+      },
+    });
   };
 
   // Save Semester
   const handleSaveSemester = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanId = `term-${semesterForm.year.replace('/', '-')}-${semesterForm.semester}`;
-    const newTerm: AcademicTerm = {
-      id: cleanId,
-      year: semesterForm.year,
-      semester: semesterForm.semester,
-      label: semesterForm.label,
-      isActive: semesterForm.isActive,
-    };
+    if (editingSemester) {
+      const updatedTerms = allTerms.map((t) => {
+        if (t.id === editingSemester.id) {
+          return {
+            ...t,
+            year: semesterForm.year,
+            semester: semesterForm.semester,
+            label: semesterForm.label,
+            isActive: semesterForm.isActive,
+          };
+        }
+        return semesterForm.isActive ? { ...t, isActive: false } : t;
+      });
+      onUpdateTerms(updatedTerms);
+      if (semesterForm.isActive) {
+        const updatedSelf = updatedTerms.find((t) => t.id === editingSemester.id);
+        if (updatedSelf) onSelectTerm(updatedSelf);
+      }
+    } else {
+      const cleanId = `term-${semesterForm.year.replace('/', '-')}-${semesterForm.semester}`;
+      const newTerm: AcademicTerm = {
+        id: cleanId,
+        year: semesterForm.year,
+        semester: semesterForm.semester,
+        label: semesterForm.label,
+        isActive: semesterForm.isActive,
+      };
 
-    let updatedTerms = [...allTerms];
-    if (newTerm.isActive) {
-      updatedTerms = updatedTerms.map((t) => ({ ...t, isActive: false }));
-    }
-    updatedTerms.push(newTerm);
-    onUpdateTerms(updatedTerms);
-    if (newTerm.isActive) {
-      onSelectTerm(newTerm);
+      let updatedTerms = [...allTerms];
+      if (newTerm.isActive) {
+        updatedTerms = updatedTerms.map((t) => ({ ...t, isActive: false }));
+      }
+      updatedTerms.push(newTerm);
+      onUpdateTerms(updatedTerms);
+      if (newTerm.isActive) {
+        onSelectTerm(newTerm);
+      }
     }
     setSemesterModalOpen(false);
+    setEditingSemester(null);
   };
 
   const handleSetActiveSemester = (termId: string) => {
@@ -215,15 +290,25 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
     if (selected) onSelectTerm(selected);
   };
 
-  const handleDeleteSemester = (termId: string) => {
+  const handleDeleteSemester = (termId: string, label?: string) => {
     if (allTerms.length <= 1) {
-      window.alert('Minimal harus tersisa 1 periode semester di sistem.');
+      setConfirmDelete({
+        isOpen: true,
+        title: 'Tidak Dapat Menghapus',
+        message: 'Minimal harus tersisa 1 periode semester aktif di dalam sistem.',
+        onConfirm: () => {},
+      });
       return;
     }
-    if (window.confirm('Hapus periode semester ini?')) {
-      const updated = allTerms.filter((t) => t.id !== termId);
-      onUpdateTerms(updated);
-    }
+    setConfirmDelete({
+      isOpen: true,
+      title: 'Hapus Periode Semester',
+      message: `Hapus periode semester ${label ? `"${label}"` : ''}? Data rekap dan nilai terkait mungkin tidak dapat diakses pada periode ini.`,
+      onConfirm: () => {
+        const updated = allTerms.filter((t) => t.id !== termId);
+        onUpdateTerms(updated);
+      },
+    });
   };
 
   // Toggle permission for a role
@@ -238,74 +323,163 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
     });
   };
 
-  // Password Change Handler
-  const handleChangePasswordSubmit = (e: React.FormEvent) => {
+  // --- ADMIN APLIKASI HANDLERS ---
+  const filteredAdminList = useMemo(() => {
+    return allAdminUsers.filter((adm) => {
+      const q = adminSearch.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        (adm.nama || '').toLowerCase().includes(q) ||
+        (adm.email || '').toLowerCase().includes(q) ||
+        (adm.ttl || '').toLowerCase().includes(q) ||
+        (adm.pendidikan || '').toLowerCase().includes(q)
+      );
+    });
+  }, [allAdminUsers, adminSearch]);
+
+  const totalAdminPages = Math.max(1, Math.ceil(filteredAdminList.length / adminPageSize));
+  const paginatedAdminList = useMemo(() => {
+    const start = (adminCurrentPage - 1) * adminPageSize;
+    return filteredAdminList.slice(start, start + adminPageSize);
+  }, [filteredAdminList, adminCurrentPage, adminPageSize]);
+
+  const handleOpenAddAdmin = () => {
+    setEditingAdmin(null);
+    setAdminForm({
+      email: '',
+      nama: '',
+      gender: 'L',
+      ttl: '',
+      pendidikan: 'Staf Madrasah',
+      password: '',
+      foto: '',
+    });
+    setAdminModalOpen(true);
+  };
+
+  const handleOpenEditAdmin = (adm: AdminUser) => {
+    setEditingAdmin(adm);
+    setAdminForm({
+      email: adm.email,
+      nama: adm.nama,
+      gender: adm.gender,
+      ttl: adm.ttl,
+      pendidikan: adm.pendidikan,
+      password: adm.password,
+      foto: adm.foto || '',
+    });
+    setAdminModalOpen(true);
+  };
+
+  const handleSaveAdmin = (e: React.FormEvent) => {
     e.preventDefault();
-    setPasswordNotice(null);
+    if (!adminForm.nama.trim() || !adminForm.email.trim() || !adminForm.password.trim()) {
+      return;
+    }
 
-    if (oldPasswordInput.trim() !== adminPassword.trim()) {
-      setPasswordNotice({
-        success: false,
-        message: 'Password lama tidak sesuai dengan password saat ini!',
+    if (editingAdmin) {
+      const updated = allAdminUsers.map((a) =>
+        a.id === editingAdmin.id ? { ...a, ...adminForm } : a
+      );
+      if (onUpdateAdminUsers) onUpdateAdminUsers(updated);
+      // If editing active password
+      if (onUpdateAdminPassword && editingAdmin.id === 'adm-1') {
+        onUpdateAdminPassword(adminForm.password);
+      }
+    } else {
+      const newAdmin: AdminUser = {
+        id: `adm-${Date.now()}`,
+        ...adminForm,
+      };
+      const updated = [...allAdminUsers, newAdmin];
+      if (onUpdateAdminUsers) onUpdateAdminUsers(updated);
+    }
+    setAdminModalOpen(false);
+    setEditingAdmin(null);
+  };
+
+  const handleDeleteAdmin = (adm: AdminUser) => {
+    if (allAdminUsers.length <= 1) {
+      setConfirmDelete({
+        isOpen: true,
+        title: 'Tidak Dapat Menghapus',
+        message: 'Minimal harus tersisa 1 akun Administrator aplikasi untuk mengelola sistem.',
+        onConfirm: () => {},
       });
       return;
     }
 
-    if (newPasswordInput.trim().length < 4) {
-      setPasswordNotice({
-        success: false,
-        message: 'Password baru minimal harus 4 karakter!',
-      });
-      return;
-    }
+    setConfirmDelete({
+      isOpen: true,
+      title: 'Hapus Admin Aplikasi',
+      message: `Apakah Anda yakin ingin menghapus admin "${adm.nama}" (${adm.email}) dari sistem?`,
+      onConfirm: () => {
+        const updated = allAdminUsers.filter((a) => a.id !== adm.id);
+        if (onUpdateAdminUsers) onUpdateAdminUsers(updated);
+      },
+    });
+  };
 
-    if (newPasswordInput.trim() !== confirmPasswordInput.trim()) {
-      setPasswordNotice({
-        success: false,
-        message: 'Konfirmasi password baru tidak cocok!',
-      });
-      return;
-    }
+  const handleCopyAdminData = () => {
+    const header = ['No', 'Email', 'Nama', 'L/P', 'TTL', 'Pendidikan', 'Password'].join('\t');
+    const rows = filteredAdminList.map((a, idx) =>
+      [idx + 1, a.email, a.nama, a.gender, a.ttl, a.pendidikan, a.password].join('\t')
+    );
+    const fullText = [header, ...rows].join('\n');
+    navigator.clipboard.writeText(fullText).then(() => {
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 3000);
+    });
+  };
 
-    if (onUpdateAdminPassword) {
-      onUpdateAdminPassword(newPasswordInput.trim());
-      setPasswordNotice({
-        success: true,
-        message: 'Alhamdulillah! Password akun Administrator berhasil diganti dan tersimpan.',
-      });
-      setOldPasswordInput('');
-      setNewPasswordInput('');
-      setConfirmPasswordInput('');
-    }
+  const handlePrintAdminData = () => {
+    window.print();
+  };
+
+  const handleExportAdminExcel = () => {
+    const headers = ['No', 'Email', 'Nama', 'L/P', 'TTL', 'Pendidikan', 'Password'];
+    const rows = filteredAdminList.map((a, idx) => [
+      idx + 1,
+      `"${a.email.replace(/"/g, '""')}"`,
+      `"${a.nama.replace(/"/g, '""')}"`,
+      `"${a.gender}"`,
+      `"${a.ttl.replace(/"/g, '""')}"`,
+      `"${a.pendidikan.replace(/"/g, '""')}"`,
+      `"${a.password.replace(/"/g, '""')}"`,
+    ]);
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Data_Admin_RDM_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
-    <div className="space-y-5">
-      
-      {/* Active Sub-Section Header Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-3 rounded-2xl border border-slate-200/80 shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-emerald-800 text-amber-300 flex items-center justify-center font-bold shadow-xs">
-            {activeSubTab === 'petinggi' && <Users className="w-4 h-4" />}
-            {activeSubTab === 'panitia' && <Award className="w-4 h-4" />}
-            {activeSubTab === 'semester' && <Calendar className="w-4 h-4" />}
-            {activeSubTab === 'identitas' && <Landmark className="w-4 h-4" />}
-            {activeSubTab === 'keamanan' && <KeyRound className="w-4 h-4" />}
-            {activeSubTab === 'akses' && <ShieldCheck className="w-4 h-4" />}
+    <div className="space-y-4 pb-12">
+      {/* Header Context Indicator */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-emerald-700 text-white rounded-xl shadow-xs">
+            <Landmark className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] uppercase font-extrabold tracking-wider text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-slate-500 font-semibold">
                 Profil Pesantren
               </span>
               <span className="text-xs text-slate-400 font-bold">/</span>
-              <h2 className="text-xs sm:text-sm font-extrabold text-slate-800">
-                {activeSubTab === 'petinggi' && `Pimpinan Pesantren (${petinggiList.length} Terdaftar)`}
-                {activeSubTab === 'panitia' && `Panitia Ujian (${panitiaList.length} Anggota)`}
-                {activeSubTab === 'semester' && `Pengaturan Semester & Tahun Ajaran (${allTerms.length} Periode)`}
-                {activeSubTab === 'identitas' && 'Identitas & Informasi Pesantren'}
-                {activeSubTab === 'keamanan' && 'Ganti Password Administrator'}
-                {activeSubTab === 'akses' && 'Pengaturan Hak Akses Pengguna'}
+              <h2 className="text-xs sm:text-sm font-extrabold text-slate-800 uppercase tracking-wide">
+                {activeSubTab === 'petinggi' && `PIMPINAN PESANTREN (${petinggiList.length} TERDAFTAR)`}
+                {activeSubTab === 'panitia' && `PANITIA UJIAN (${panitiaList.length} ANGGOTA)`}
+                {activeSubTab === 'semester' && `PENGATURAN SEMESTER & TAHUN AJARAN (${allTerms.length} PERIODE)`}
+                {activeSubTab === 'identitas' && 'IDENTITAS & INFORMASI PESANTREN'}
+                {activeSubTab === 'keamanan' && 'ADMIN APLIKASI (DATA ADMIN RDM)'}
+                {activeSubTab === 'akses' && 'PENGATURAN HAK AKSES PENGGUNA'}
               </h2>
             </div>
           </div>
@@ -318,6 +492,35 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
             {isAdmin ? 'Mode Admin' : 'Mode Asatidz'}
           </span>
         </div>
+      </div>
+
+      {/* Sub-Menu Navigation Bar inside Profil Pesantren */}
+      <div className="flex flex-wrap items-center gap-1.5 bg-white p-2 rounded-xl border border-slate-200/80 shadow-2xs">
+        {[
+          { id: 'petinggi' as const, label: `Pimpinan Pesantren (${petinggiList.length})` },
+          { id: 'panitia' as const, label: `Panitia Ujian (${panitiaList.length})` },
+          ...(isAdmin
+            ? [
+                { id: 'semester' as const, label: `Pengaturan Semester (${allTerms.length})` },
+                { id: 'identitas' as const, label: 'Identitas Pesantren' },
+                { id: 'keamanan' as const, label: 'Admin Aplikasi' },
+                { id: 'akses' as const, label: 'Hak Akses Pengguna' },
+              ]
+            : []),
+        ].map((tabItem) => (
+          <button
+            key={tabItem.id}
+            type="button"
+            onClick={() => setActiveSubTab(tabItem.id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+              activeSubTab === tabItem.id
+                ? 'bg-emerald-800 text-white shadow-2xs'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+          >
+            {tabItem.label}
+          </button>
+        ))}
       </div>
 
       {/* ============================================================ */}
@@ -360,66 +563,61 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
             )}
           </div>
 
-          {/* Compact Cards Grid - Reduced box sizes to save space */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {/* Larger Cards Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {petinggiList
               .sort((a, b) => a.urutan - b.urutan)
               .map((petinggi) => (
                 <div
                   key={petinggi.id}
-                  className="bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition text-xs"
+                  className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-400 transition text-sm"
                 >
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-xs uppercase font-bold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 truncate">
                         {petinggi.jabatan}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        #{petinggi.urutan}
-                      </span>
+
+                      {isAdmin && (
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => {
+                              setEditingPetinggi(petinggi);
+                              setPetinggiForm({
+                                nama: petinggi.nama,
+                                jabatan: petinggi.jabatan,
+                                kontak: petinggi.kontak || '',
+                                urutan: petinggi.urutan,
+                              });
+                              setPetinggiModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition"
+                            title="Edit Data Pimpinan"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeletePetinggi(petinggi.id, petinggi.nama)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                            title="Hapus Pimpinan"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
 
-                    <h4 className="text-xs sm:text-sm font-bold text-slate-900 mt-1">
+                    <h4 className="font-extrabold text-slate-900 text-sm line-clamp-1">
                       {petinggi.nama}
                     </h4>
 
                     {petinggi.kontak && (
-                      <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1.5">
-                        <Phone className="w-3 h-3 text-slate-400" />
+                      <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-2 truncate">
+                        <Phone className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
                         <span>{petinggi.kontak}</span>
-                      </div>
+                      </p>
                     )}
                   </div>
-
-                  {/* Admin controls */}
-                  {isAdmin && (
-                    <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-end gap-1.5">
-                      <button
-                        onClick={() => {
-                          setEditingPetinggi(petinggi);
-                          setPetinggiForm({
-                            nama: petinggi.nama,
-                            jabatan: petinggi.jabatan,
-                            kontak: petinggi.kontak || '',
-                            urutan: petinggi.urutan,
-                          });
-                          setPetinggiModalOpen(true);
-                        }}
-                        className="p-1 rounded text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
-                        title="Edit Data Pimpinan"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-
-                      <button
-                        onClick={() => handleDeletePetinggi(petinggi.id)}
-                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                        title="Hapus Data Pimpinan"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
                 </div>
               ))}
           </div>
@@ -430,15 +628,15 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
       {/* SECTION 2: PANITIA UJIAN (COMPACT) */}
       {/* ============================================================ */}
       {activeSubTab === 'panitia' && (
-        <div className="space-y-3.5">
-          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Award className="w-4 h-4 text-emerald-600" />
-                <span>Panitia Pelaksana Ujian (Imtihan Niha&apos;i)</span>
+                <span>Susunan Panitia Ujian Pesantren</span>
               </h3>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Struktur susunan panitia ujian semester santri.
+              <p className="text-xs text-slate-500 mt-0.5">
+                Struktur panitia pelaksana Imtihan Niha&apos;i / Ujian Akhir Semester Santri.
               </p>
             </div>
 
@@ -455,71 +653,70 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
                   });
                   setPanitiaModalOpen(true);
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-4 h-4" />
                 <span>Tambah Panitia</span>
               </button>
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {panitiaList.map((panitia) => (
               <div
                 key={panitia.id}
-                className="bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-300 transition text-xs"
+                className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between hover:border-emerald-400 transition text-sm"
               >
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-xs uppercase font-bold px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 truncate">
                       {panitia.jabatan}
                     </span>
+
+                    {isAdmin && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => {
+                            setEditingPanitia(panitia);
+                            setPanitiaForm({
+                              nama: panitia.nama,
+                              jabatan: panitia.jabatan,
+                              tugas: panitia.tugas,
+                              kontak: panitia.kontak || '',
+                            });
+                            setPanitiaModalOpen(true);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 transition"
+                          title="Edit Data Panitia"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeletePanitia(panitia.id, panitia.nama)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                          title="Hapus Panitia"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
 
-                  <h4 className="text-xs sm:text-sm font-bold text-slate-900 mt-1">
+                  <h4 className="font-extrabold text-slate-900 text-sm line-clamp-1">
                     {panitia.nama}
                   </h4>
 
-                  <p className="text-[11px] text-slate-600 mt-1 line-clamp-2 leading-relaxed">
+                  <p className="text-xs text-slate-600 mt-2 line-clamp-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                     {panitia.tugas}
                   </p>
 
                   {panitia.kontak && (
-                    <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1.5">
-                      <Phone className="w-3 h-3 text-slate-400" />
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-1 truncate">
+                      <Phone className="w-3 h-3 text-emerald-600 flex-shrink-0" />
                       <span>{panitia.kontak}</span>
-                    </div>
+                    </p>
                   )}
                 </div>
-
-                {isAdmin && (
-                  <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-end gap-1.5">
-                    <button
-                      onClick={() => {
-                        setEditingPanitia(panitia);
-                        setPanitiaForm({
-                          nama: panitia.nama,
-                          jabatan: panitia.jabatan,
-                          tugas: panitia.tugas,
-                          kontak: panitia.kontak || '',
-                        });
-                        setPanitiaModalOpen(true);
-                      }}
-                      className="p-1 rounded text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 transition"
-                      title="Edit Panitia"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      onClick={() => handleDeletePanitia(panitia.id)}
-                      className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                      title="Hapus Panitia"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -527,7 +724,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* SECTION 3: PENGATURAN SEMESTER (ACADEMIC TERMS) */}
+      {/* SECTION 3: PENGATURAN SEMESTER (COMPACT) */}
       {/* ============================================================ */}
       {activeSubTab === 'semester' && (
         <div className="space-y-3.5">
@@ -538,7 +735,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
                 <span>Pengaturan Semester &amp; Tahun Ajaran</span>
               </h3>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Kelola daftar semester dan tentukan semester yang aktif untuk penginputan nilai dan rekapitulasi.
+                Kelola periode semester aktif untuk seluruh rekap nilai, rapor, dan jadwal ujian.
               </p>
             </div>
 
@@ -546,6 +743,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
               <button
                 id="btn-tambah-semester"
                 onClick={() => {
+                  setEditingSemester(null);
                   setSemesterForm({
                     year: '2025/2026',
                     semester: 'ganjil',
@@ -562,79 +760,78 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {allTerms.map((term) => {
-              const isCurrent = currentTerm.id === term.id;
-              return (
-                <div
-                  key={term.id}
-                  className={`p-4 rounded-xl border transition flex flex-col justify-between text-xs ${
-                    isCurrent
-                      ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs'
-                      : 'bg-white border-slate-200/80 hover:border-emerald-300'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
-                        {term.semester}
-                      </span>
-                      {term.isActive ? (
-                        <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-700 text-white rounded-full flex items-center gap-1">
-                          <Check className="w-3 h-3" />
-                          <span>Default Aktif</span>
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">Arsip</span>
-                      )}
-                    </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {allTerms.map((term) => (
+              <div
+                key={term.id}
+                className={`bg-white rounded-xl p-3.5 border transition relative ${
+                  term.isActive
+                    ? 'border-emerald-500 ring-2 ring-emerald-500/20 shadow-sm'
+                    : 'border-slate-200/80 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                      term.semester === 'ganjil'
+                        ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                        : 'bg-purple-50 text-purple-700 border border-purple-200'
+                    }`}
+                  >
+                    Semester {term.semester}
+                  </span>
 
-                    <h4 className="text-sm font-bold text-slate-900 mt-1">
-                      {term.label}
-                    </h4>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      Tahun Ajaran: {term.year}
-                    </p>
-                  </div>
-
-                  <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => onSelectTerm(term)}
-                      className={`text-xs font-bold px-2.5 py-1 rounded-lg transition ${
-                        isCurrent
-                          ? 'bg-emerald-600 text-white cursor-default'
-                          : 'bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-800'
-                      }`}
-                    >
-                      {isCurrent ? 'Sedang Diakses' : 'Beralih ke Semester Ini'}
-                    </button>
-
-                    {isAdmin && (
-                      <div className="flex items-center gap-1">
-                        {!term.isActive && (
-                          <button
-                            onClick={() => handleSetActiveSemester(term.id)}
-                            className="text-[10px] font-bold px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg"
-                            title="Jadikan default aktif"
-                          >
-                            Set Default
-                          </button>
-                        )}
-                        {allTerms.length > 1 && (
-                          <button
-                            onClick={() => handleDeleteSemester(term.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded"
-                            title="Hapus semester"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  {term.isActive && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      Aktif
+                    </span>
+                  )}
                 </div>
-              );
-            })}
+
+                <h4 className="font-extrabold text-slate-900 text-sm">{term.label}</h4>
+                <p className="text-xs text-slate-500 mt-0.5">Tahun Ajaran: {term.year}</p>
+
+                <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                  {!term.isActive && (
+                    <button
+                      onClick={() => handleSetActiveSemester(term.id)}
+                      className="text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline"
+                    >
+                      Jadikan Aktif
+                    </button>
+                  )}
+
+                  {isAdmin && (
+                    <div className="flex items-center gap-1 ml-auto">
+                      <button
+                        onClick={() => {
+                          setEditingSemester(term);
+                          setSemesterForm({
+                            year: term.year,
+                            semester: term.semester,
+                            label: term.label,
+                            isActive: term.isActive,
+                          });
+                          setSemesterModalOpen(true);
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-emerald-700 hover:bg-emerald-50"
+                        title="Edit Semester"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSemester(term.id, term.label)}
+                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        title="Hapus Semester"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -643,15 +840,15 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
       {/* SECTION 4: IDENTITAS PESANTREN */}
       {/* ============================================================ */}
       {activeSubTab === 'identitas' && (
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
             <div>
               <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
                 <Landmark className="w-4 h-4 text-emerald-600" />
-                <span>Identitas Resmi Pondok Pesantren</span>
+                <span>Identitas &amp; Profil Lengkap Pesantren</span>
               </h3>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Data profil ini dicantumkan pada kop raport, jadwal ujian, dan lembar rekapitulasi.
+                Data resmi lembaga yang dicantumkan pada kop surat rapor santri dan dokumen ujian.
               </p>
             </div>
 
@@ -661,73 +858,47 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
                   setProfileForm(profile);
                   setIsEditingProfile(true);
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-xs transition"
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs transition"
               >
                 <Edit2 className="w-3.5 h-3.5" />
-                <span>Edit Identitas</span>
+                <span>Edit Identitas Lembaga</span>
               </button>
             )}
           </div>
 
-          {!isEditingProfile ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-center">
-              <div className="flex flex-col items-center justify-center p-4 bg-slate-50 rounded-xl border border-slate-100">
-                <img
-                  src={profile.logoUrl || '/logo_alhusna.jpg'}
-                  alt="Logo Alhusna"
-                  className="w-24 h-24 rounded-full object-cover shadow-md ring-4 ring-amber-400/80 bg-white p-1 mb-2"
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).src = '/logo_alhusna.jpg';
-                  }}
-                />
-                <span className="text-[11px] font-bold text-slate-700">Logo Pesantren</span>
-              </div>
-
-              <div className="md:col-span-2 space-y-2.5 text-xs">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Nama Pesantren</label>
-                  <p className="font-bold text-slate-900 text-sm">{profile.nama}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase">NSPP</label>
-                    <p className="font-semibold text-slate-800">{profile.nspp || '-'}</p>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase">Tahun Berdiri</label>
-                    <p className="font-semibold text-slate-800">{profile.tahunBerdiri || '-'}</p>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Alamat Lengkap</label>
-                  <p className="text-slate-700">{profile.alamat}</p>
-                </div>
-              </div>
-            </div>
-          ) : (
+          {isEditingProfile ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 onUpdateProfile(profileForm);
                 setIsEditingProfile(false);
               }}
-              className="space-y-3.5 text-xs"
+              className="space-y-4 text-xs"
             >
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Nama Pesantren</label>
-                <input
-                  type="text"
-                  value={profileForm.nama}
-                  onChange={(e) => setProfileForm({ ...profileForm, nama: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">NSPP</label>
+                  <label className="block font-bold text-slate-700 mb-1">Nama Pesantren</label>
+                  <input
+                    type="text"
+                    value={profileForm.nama}
+                    onChange={(e) => setProfileForm({ ...profileForm, nama: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Sub Judul / Keterangan</label>
+                  <input
+                    type="text"
+                    value={profileForm.subTitle}
+                    onChange={(e) => setProfileForm({ ...profileForm, subTitle: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Nomor Statistik Pesantren (NSPP)</label>
                   <input
                     type="text"
                     value={profileForm.nspp}
@@ -735,164 +906,400 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
+
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Tahun Berdiri</label>
+                  <label className="block font-bold text-slate-700 mb-1">Nomor Telepon / WhatsApp</label>
                   <input
                     type="text"
-                    value={profileForm.tahunBerdiri}
-                    onChange={(e) => setProfileForm({ ...profileForm, tahunBerdiri: e.target.value })}
+                    value={profileForm.noTelp}
+                    onChange={(e) => setProfileForm({ ...profileForm, noTelp: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
-              </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Alamat Lengkap</label>
-                <textarea
-                  rows={2}
-                  value={profileForm.alamat}
-                  onChange={(e) => setProfileForm({ ...profileForm, alamat: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                  required
-                />
-              </div>
+                <div className="sm:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">Alamat Lengkap</label>
+                  <input
+                    type="text"
+                    value={profileForm.alamat}
+                    onChange={(e) => setProfileForm({ ...profileForm, alamat: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1">Upload File Logo Baru (Opsional)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLogoUpload}
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
-                />
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Kecamatan</label>
+                  <input
+                    type="text"
+                    value={profileForm.kecamatan}
+                    onChange={(e) => setProfileForm({ ...profileForm, kecamatan: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Kabupaten / Kota</label>
+                  <input
+                    type="text"
+                    value={profileForm.kabupaten}
+                    onChange={(e) => setProfileForm({ ...profileForm, kabupaten: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Provinsi</label>
+                  <input
+                    type="text"
+                    value={profileForm.provinsi}
+                    onChange={(e) => setProfileForm({ ...profileForm, provinsi: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Email Resmi</label>
+                  <input
+                    type="email"
+                    value={profileForm.email}
+                    onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setIsEditingProfile(false)}
-                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-slate-700 font-semibold"
+                  className="px-3.5 py-1.5 font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg shadow-xs flex items-center gap-1"
+                  className="px-4 py-1.5 font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs"
                 >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>Simpan Identitas</span>
+                  Simpan Perubahan
                 </button>
               </div>
             </form>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+              <div className="flex flex-col items-center justify-center p-4 bg-slate-50 rounded-2xl border border-slate-200/80 text-center">
+                <img
+                  src={profile.logoUrl || '/logo_alhusna.jpg'}
+                  alt="Logo Lembaga"
+                  className="w-24 h-24 rounded-full object-cover shadow-sm bg-white p-1 border border-emerald-300 mb-3"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = '/logo_alhusna.jpg';
+                  }}
+                />
+                <h4 className="font-bold text-slate-800 text-sm">{profile.nama}</h4>
+                <p className="text-[11px] text-slate-500">{profile.subTitle}</p>
+
+                {isAdmin && (
+                  <label className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-slate-300 hover:border-emerald-500 text-slate-700 rounded-lg cursor-pointer text-[11px] font-semibold transition">
+                    <Upload className="w-3 h-3 text-emerald-600" />
+                    <span>Ubah Logo</span>
+                    <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+                  </label>
+                )}
+              </div>
+
+              <div className="md:col-span-2 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">NSPP</span>
+                    <span className="font-bold text-slate-800">{profile.nspp || '-'}</span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Telepon / WA</span>
+                    <span className="font-bold text-slate-800">{profile.noTelp || '-'}</span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 sm:col-span-2">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Alamat</span>
+                    <span className="font-medium text-slate-800">
+                      {profile.alamat}, Kec. {profile.kecamatan}, Kab. {profile.kabupaten}, {profile.provinsi}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Email</span>
+                    <span className="font-bold text-slate-800">{profile.email || '-'}</span>
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Website</span>
+                    <span className="font-bold text-slate-800">{profile.website || '-'}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}
 
       {/* ============================================================ */}
-      {/* SECTION 5: GANTI PASSWORD ADMIN (ADMIN ONLY) */}
+      {/* SECTION 5: ADMIN APLIKASI (DATA ADMIN RDM) - EXACT AS IMAGE 2 */}
       {/* ============================================================ */}
       {activeSubTab === 'keamanan' && isAdmin && (
-        <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs max-w-lg space-y-4">
-          <div className="pb-3 border-b border-slate-100">
-            <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
-              <KeyRound className="w-4 h-4 text-emerald-600" />
-              <span>Ganti Password Administrator</span>
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Perbarui password akun Administrator untuk menjaga keamanan portal aplikasi.
-            </p>
-          </div>
-
-          {passwordNotice && (
-            <div
-              className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
-                passwordNotice.success
-                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                  : 'bg-rose-50 border border-rose-200 text-rose-800'
-              }`}
-            >
-              {passwordNotice.success ? (
-                <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-              ) : (
-                <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-              )}
-              <span>{passwordNotice.message}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleChangePasswordSubmit} className="space-y-3 text-xs">
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Password Saat Ini (Lama)</label>
-              <div className="relative">
-                <input
-                  type={showOldPass ? 'text' : 'password'}
-                  value={oldPasswordInput}
-                  onChange={(e) => setOldPasswordInput(e.target.value)}
-                  placeholder="Masukkan password admin lama..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none pr-9"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowOldPass(!showOldPass)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  {showOldPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
+        <div className="space-y-4">
+          
+          {/* Main Card Container */}
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+            
+            {/* Header Title Bar with + Tambah button */}
+            <div className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 bg-white">
+              <div>
+                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
+                  Data Admin RDM
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Master Data
+                </p>
               </div>
-            </div>
 
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Password Baru</label>
-              <div className="relative">
-                <input
-                  type={showNewPass ? 'text' : 'password'}
-                  value={newPasswordInput}
-                  onChange={(e) => setNewPasswordInput(e.target.value)}
-                  placeholder="Minimal 4 karakter..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none pr-9"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowNewPass(!showNewPass)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  {showNewPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Konfirmasi Password Baru</label>
-              <div className="relative">
-                <input
-                  type={showConfirmPass ? 'text' : 'password'}
-                  value={confirmPasswordInput}
-                  onChange={(e) => setConfirmPasswordInput(e.target.value)}
-                  placeholder="Ulangi password baru..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none pr-9"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPass(!showConfirmPass)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  {showConfirmPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-2">
               <button
-                type="submit"
-                className="w-full py-2.5 px-4 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl shadow-xs transition"
+                id="btn-tambah-admin-rdm"
+                onClick={handleOpenAddAdmin}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white font-bold text-xs rounded-lg shadow-xs transition cursor-pointer self-start sm:self-auto"
               >
-                Simpan &amp; Perbarui Password
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Tambah</span>
               </button>
             </div>
-          </form>
+
+            {/* Datatable Controls Toolbar */}
+            <div className="p-3.5 sm:p-4 bg-slate-50/50 border-b border-slate-200/70 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
+              
+              {/* Left Buttons: Copy, Print, Excel & Show entries */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyAdminData}
+                  className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 font-semibold inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                  title="Salin data tabel ke clipboard"
+                >
+                  <Copy className="w-3 h-3 text-slate-600" />
+                  <span>Copy</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePrintAdminData}
+                  className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 font-semibold inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                  title="Cetak daftar admin"
+                >
+                  <Printer className="w-3 h-3 text-slate-600" />
+                  <span>Print</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExportAdminExcel}
+                  className="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded text-slate-700 font-semibold inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                  title="Unduh Excel / Spreadsheet"
+                >
+                  <FileSpreadsheet className="w-3 h-3 text-emerald-600" />
+                  <span>Excel</span>
+                </button>
+
+                {copyFeedback && (
+                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded animate-fade-in">
+                    Disalin!
+                  </span>
+                )}
+
+                <div className="flex items-center gap-1 text-slate-600 ml-1">
+                  <span>Show</span>
+                  <select
+                    value={adminPageSize}
+                    onChange={(e) => {
+                      setAdminPageSize(Number(e.target.value));
+                      setAdminCurrentPage(1);
+                    }}
+                    className="px-2 py-1 bg-white border border-slate-300 rounded text-xs text-slate-800 font-medium focus:ring-1 focus:ring-emerald-500 outline-none cursor-pointer"
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  <span>entries</span>
+                </div>
+              </div>
+
+              {/* Right Search Input */}
+              <div className="flex items-center gap-1.5 justify-end">
+                <span className="text-slate-600 font-medium">Search:</span>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={adminSearch}
+                    onChange={(e) => {
+                      setAdminSearch(e.target.value);
+                      setAdminCurrentPage(1);
+                    }}
+                    placeholder=""
+                    className="px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs text-slate-900 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none w-36 sm:w-48 shadow-2xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Datatable Area */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-slate-800 border-collapse">
+                <thead>
+                  <tr className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-300 select-none">
+                    <th className="py-2.5 px-3 w-10 text-center border-r border-slate-200">
+                      No
+                    </th>
+                    <th className="py-2.5 px-4 border-r border-slate-200">
+                      Email
+                    </th>
+                    <th className="py-2.5 px-4 border-r border-slate-200">
+                      Nama
+                    </th>
+                    <th className="py-2.5 px-3 w-14 text-center border-r border-slate-200">
+                      L/P
+                    </th>
+                    <th className="py-2.5 px-4 border-r border-slate-200">
+                      TTL
+                    </th>
+                    <th className="py-2.5 px-4 border-r border-slate-200">
+                      Pendidikan
+                    </th>
+                    <th className="py-2.5 px-4 border-r border-slate-200">
+                      Password
+                    </th>
+                    <th className="py-2.5 px-3 w-28 text-center">
+                      Aksi
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {paginatedAdminList.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-slate-400">
+                        Tidak ada data admin yang ditemukan.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedAdminList.map((adminItem, index) => {
+                      const rowNumber = (adminCurrentPage - 1) * adminPageSize + index + 1;
+                      return (
+                        <tr key={adminItem.id} className="hover:bg-emerald-50/40 transition">
+                          <td className="py-2.5 px-3 text-center text-slate-600 font-medium border-r border-slate-200">
+                            {rowNumber}
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-800 font-normal border-r border-slate-200">
+                            {adminItem.email}
+                          </td>
+                          <td className="py-2.5 px-4 font-bold text-slate-900 border-r border-slate-200 uppercase">
+                            {adminItem.nama}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-semibold text-slate-700 border-r border-slate-200">
+                            {adminItem.gender || 'L'}
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-700 border-r border-slate-200">
+                            {adminItem.ttl || '-'}
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-700 border-r border-slate-200">
+                            {adminItem.pendidikan || 'Staf Madrasah'}
+                          </td>
+                          <td className="py-2.5 px-4 font-mono font-medium text-slate-800 border-r border-slate-200">
+                            {adminItem.password}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditAdmin(adminItem)}
+                                className="px-2 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[11px] font-semibold inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                                title="Edit Admin"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteAdmin(adminItem)}
+                                className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded text-[11px] font-semibold inline-flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                                title="Hapus Admin"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Del</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Datatable Footer (Showing X of Y & Pagination) */}
+            <div className="p-3.5 sm:p-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+              <div>
+                Showing {filteredAdminList.length > 0 ? (adminCurrentPage - 1) * adminPageSize + 1 : 0} to{' '}
+                {Math.min(adminCurrentPage * adminPageSize, filteredAdminList.length)} of {filteredAdminList.length} entries
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={adminCurrentPage === 1}
+                  onClick={() => setAdminCurrentPage(1)}
+                  className="px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none text-slate-700 font-medium"
+                >
+                  First
+                </button>
+                <button
+                  type="button"
+                  disabled={adminCurrentPage === 1}
+                  onClick={() => setAdminCurrentPage((p) => Math.max(1, p - 1))}
+                  className="px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none text-slate-700 font-medium"
+                >
+                  Previous
+                </button>
+
+                {Array.from({ length: totalAdminPages }, (_, i) => i + 1).map((pg) => (
+                  <button
+                    key={pg}
+                    type="button"
+                    onClick={() => setAdminCurrentPage(pg)}
+                    className={`px-3 py-1 rounded font-bold transition ${
+                      adminCurrentPage === pg
+                        ? 'bg-emerald-700 text-white'
+                        : 'border border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    {pg}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  disabled={adminCurrentPage === totalAdminPages}
+                  onClick={() => setAdminCurrentPage((p) => Math.min(totalAdminPages, p + 1))}
+                  className="px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none text-slate-700 font-medium"
+                >
+                  Next
+                </button>
+                <button
+                  type="button"
+                  disabled={adminCurrentPage === totalAdminPages}
+                  onClick={() => setAdminCurrentPage(totalAdminPages)}
+                  className="px-2.5 py-1 rounded border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none text-slate-700 font-medium"
+                >
+                  Last
+                </button>
+              </div>
+            </div>
+
+          </div>
         </div>
       )}
 
@@ -907,75 +1314,123 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
               <span>Matriks Hak Akses Pengguna</span>
             </h3>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Atur izin tindakan untuk masing-masing peran (Admin vs Asatidz).
+              Atur hak akses Administrator dan Asatidz untuk pengeditan data santri, input nilai, dan manajemen kelas.
             </p>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
+            <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-slate-700">
-                  <th className="py-2.5 px-3 font-bold">Fitur / Hak Izin</th>
-                  <th className="py-2.5 px-3 text-center font-bold">Admin</th>
-                  <th className="py-2.5 px-3 text-center font-bold">Asatidz</th>
-                  <th className="py-2.5 px-3 font-bold">Keterangan</th>
+                <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                  <th className="py-2.5 px-3">Fitur &amp; Wewenang</th>
+                  <th className="py-2.5 px-3 text-center">Administrator</th>
+                  <th className="py-2.5 px-3 text-center">Asatidz / Guru</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {[
-                  {
-                    key: 'canInputNilai' as keyof RolePermissions,
-                    title: 'Input & Edit Nilai Ujian Santri',
-                    desc: 'Mengisi nilai harian, lisan, dan tulis untuk santri.',
-                  },
-                  {
-                    key: 'canUploadJadwal' as keyof RolePermissions,
-                    title: 'Upload Dokumen / Jadwal Ujian',
-                    desc: 'Mengunggah jadwal ujian formal.',
-                  },
-                  {
-                    key: 'canManageLembaga' as keyof RolePermissions,
-                    title: 'Kelola Mapel & Kelas Santri',
-                    desc: 'Menambah dan mengorganisir data kelas dan mata pelajaran.',
-                  },
-                  {
-                    key: 'canEditProfil' as keyof RolePermissions,
-                    title: 'Edit Identitas Pesantren & Pimpinan',
-                    desc: 'Memperbarui profil pondok dan data pimpinan.',
-                  },
-                  {
-                    key: 'canViewAllRekap' as keyof RolePermissions,
-                    title: 'Download Rekapan Excel Multi-Kelas',
-                    desc: 'Mengekspor berkas rekapitulasi nilai per guru.',
-                  },
-                ].map((item) => (
-                  <tr key={item.key} className="hover:bg-slate-50/60">
-                    <td className="py-2.5 px-3 font-bold text-slate-800">{item.title}</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <button
-                        onClick={() => togglePermission('admin', item.key)}
-                        disabled={!isAdmin}
-                        className={`w-8 h-4.5 rounded-full p-0.5 inline-flex items-center ${
-                          permissions.admin[item.key] ? 'bg-emerald-600 justify-end' : 'bg-slate-300 justify-start'
-                        }`}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full bg-white shadow-xs" />
-                      </button>
-                    </td>
-                    <td className="py-2.5 px-3 text-center">
-                      <button
-                        onClick={() => togglePermission('asatidz', item.key)}
-                        disabled={!isAdmin}
-                        className={`w-8 h-4.5 rounded-full p-0.5 inline-flex items-center ${
-                          permissions.asatidz[item.key] ? 'bg-emerald-600 justify-end' : 'bg-slate-300 justify-start'
-                        }`}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full bg-white shadow-xs" />
-                      </button>
-                    </td>
-                    <td className="py-2.5 px-3 text-slate-500 text-[11px]">{item.desc}</td>
-                  </tr>
-                ))}
+                <tr>
+                  <td className="py-2.5 px-3 font-semibold text-slate-800">
+                    Input &amp; Edit Nilai Santri
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('admin', 'canInputNilai')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.admin.canInputNilai ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('asatidz', 'canInputNilai')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.asatidz.canInputNilai ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td className="py-2.5 px-3 font-semibold text-slate-800">
+                    Manajemen Lembaga &amp; Struktur Kelas
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('admin', 'canManageLembaga')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.admin.canManageLembaga ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('asatidz', 'canManageLembaga')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.asatidz.canManageLembaga ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td className="py-2.5 px-3 font-semibold text-slate-800">
+                    Upload &amp; Kelola Data Santri
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('admin', 'canUploadSantri')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.admin.canUploadSantri ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('asatidz', 'canUploadSantri')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.asatidz.canUploadSantri ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td className="py-2.5 px-3 font-semibold text-slate-800">
+                    Unduh Rekap &amp; Ekspor Excel
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('admin', 'canDownloadExcel')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.admin.canDownloadExcel ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                  <td className="py-2.5 px-3 text-center">
+                    <button
+                      onClick={() => togglePermission('asatidz', 'canDownloadExcel')}
+                      className={`w-6 h-6 rounded-md inline-flex items-center justify-center font-bold text-white transition ${
+                        permissions.asatidz.canDownloadExcel ? 'bg-emerald-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      ✓
+                    </button>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -983,14 +1438,143 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* MODAL: Tambah/Edit Pimpinan Pesantren (NO GELAR FIELD) */}
+      {/* MODAL: Tambah / Edit Admin RDM (Image 2) */}
+      {/* ============================================================ */}
+      {adminModalOpen && isAdmin && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            
+            <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between">
+              <h4 className="font-bold text-sm">
+                {editingAdmin ? 'Edit Data Admin RDM' : 'Tambah Admin Aplikasi RDM'}
+              </h4>
+              <button
+                onClick={() => setAdminModalOpen(false)}
+                className="text-white/80 hover:text-white text-base font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAdmin} className="p-4 sm:p-5 space-y-3.5 text-xs">
+              
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Nama Lengkap Admin <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={adminForm.nama}
+                  onChange={(e) => setAdminForm({ ...adminForm, nama: e.target.value })}
+                  placeholder="Contoh: GORDI ARAFAH"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-semibold"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Email Login <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={adminForm.email}
+                    onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })}
+                    placeholder="gordiarafah090106@gmail.com"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Jenis Kelamin (L/P)
+                  </label>
+                  <select
+                    value={adminForm.gender}
+                    onChange={(e) => setAdminForm({ ...adminForm, gender: e.target.value as 'L' | 'P' })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none cursor-pointer"
+                  >
+                    <option value="L">Laki-Laki (L)</option>
+                    <option value="P">Perempuan (P)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Tempat, Tanggal Lahir (TTL)
+                </label>
+                <input
+                  type="text"
+                  value={adminForm.ttl}
+                  onChange={(e) => setAdminForm({ ...adminForm, ttl: e.target.value })}
+                  placeholder="DHARMASRAYA, 09 Januari 2006"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Pendidikan / Jabatan
+                </label>
+                <input
+                  type="text"
+                  value={adminForm.pendidikan}
+                  onChange={(e) => setAdminForm({ ...adminForm, pendidikan: e.target.value })}
+                  placeholder="Staf Madrasah / Sarjana Komputer / dll"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Password Login Admin <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={adminForm.password}
+                  onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })}
+                  placeholder="Arafah@2006"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none font-mono font-bold"
+                  required
+                />
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Password ini dapat digunakan untuk login ke portal sistem sebagai Administrator.
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAdminModalOpen(false)}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs cursor-pointer transition"
+                >
+                  {editingAdmin ? 'Perbarui Data Admin' : 'Simpan Data Admin'}
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* MODAL: Tambah Pimpinan */}
       {/* ============================================================ */}
       {petinggiModalOpen && isAdmin && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between">
               <h4 className="font-bold text-sm">
-                {editingPetinggi ? 'Edit Pimpinan Pesantren' : 'Tambah Pimpinan Pesantren'}
+                {editingPetinggi ? 'Edit Data Pimpinan' : 'Tambah Pimpinan Pesantren'}
               </h4>
               <button
                 onClick={() => setPetinggiModalOpen(false)}
@@ -1003,13 +1587,13 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
             <form onSubmit={handleSavePetinggi} className="p-4 space-y-3 text-xs">
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Nama Lengkap Pimpinan / Kyai
+                  Nama Lengkap &amp; Gelar
                 </label>
                 <input
                   type="text"
                   value={petinggiForm.nama}
                   onChange={(e) => setPetinggiForm({ ...petinggiForm, nama: e.target.value })}
-                  placeholder="Contoh: KH. Muhammad Syakir, Lc."
+                  placeholder="K.H. ..."
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
@@ -1017,13 +1601,13 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Jabatan / Amanah
+                  Jabatan / Posisi
                 </label>
                 <input
                   type="text"
                   value={petinggiForm.jabatan}
                   onChange={(e) => setPetinggiForm({ ...petinggiForm, jabatan: e.target.value })}
-                  placeholder="Contoh: Pengasuh Pondok Pesantren"
+                  placeholder="Pengasuh / Mudir Pesantren"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
@@ -1032,7 +1616,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
-                    Kontak / No. Telp
+                    Kontak / WhatsApp
                   </label>
                   <input
                     type="text"
@@ -1042,14 +1626,15 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
+
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">
-                    Urutan Tampil
+                    Urutan Tampilan
                   </label>
                   <input
                     type="number"
                     value={petinggiForm.urutan}
-                    onChange={(e) => setPetinggiForm({ ...petinggiForm, urutan: parseInt(e.target.value) || 1 })}
+                    onChange={(e) => setPetinggiForm({ ...petinggiForm, urutan: Number(e.target.value) })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                     min={1}
                   />
@@ -1077,14 +1662,14 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* MODAL: Tambah/Edit Panitia */}
+      {/* MODAL: Tambah Panitia */}
       {/* ============================================================ */}
       {panitiaModalOpen && isAdmin && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between">
               <h4 className="font-bold text-sm">
-                {editingPanitia ? 'Edit Panitia Ujian' : 'Tambah Panitia Ujian'}
+                {editingPanitia ? 'Edit Anggota Panitia' : 'Tambah Panitia Ujian'}
               </h4>
               <button
                 onClick={() => setPanitiaModalOpen(false)}
@@ -1097,13 +1682,13 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
             <form onSubmit={handleSavePanitia} className="p-4 space-y-3 text-xs">
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Nama Anggota Panitia
+                  Nama Lengkap Anggota
                 </label>
                 <input
                   type="text"
                   value={panitiaForm.nama}
                   onChange={(e) => setPanitiaForm({ ...panitiaForm, nama: e.target.value })}
-                  placeholder="Contoh: Ust. Fauzan Adhim, S.Pd.I."
+                  placeholder="Ust. ..."
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
@@ -1111,13 +1696,13 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Jabatan di Panitia
+                  Jabatan Kepanitiaan
                 </label>
                 <input
                   type="text"
                   value={panitiaForm.jabatan}
                   onChange={(e) => setPanitiaForm({ ...panitiaForm, jabatan: e.target.value })}
-                  placeholder="Contoh: Ketua Panitia / Sekretaris"
+                  placeholder="Ketua Panitia / Sekretaris / Anggota"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
                   required
                 />
@@ -1125,7 +1710,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Uraian Tugas Pokok
+                  Tugas &amp; Tanggung Jawab
                 </label>
                 <textarea
                   value={panitiaForm.tugas}
@@ -1178,7 +1763,7 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="bg-emerald-800 text-white p-3.5 sm:p-4 flex items-center justify-between">
               <h4 className="font-bold text-sm">
-                Tambah Periode Semester Baru
+                {editingSemester ? 'Edit Periode Semester' : 'Tambah Periode Semester Baru'}
               </h4>
               <button
                 onClick={() => setSemesterModalOpen(false)}
@@ -1271,13 +1856,27 @@ export const ProfilPesantrenView: React.FC<ProfilPesantrenViewProps> = ({
                   type="submit"
                   className="px-4 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs"
                 >
-                  Simpan Semester
+                  {editingSemester ? 'Perbarui Semester' : 'Simpan Semester'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* In-app deletion confirmation modal */}
+      <ConfirmModal
+        isOpen={!!confirmDelete?.isOpen}
+        title={confirmDelete?.title}
+        message={confirmDelete?.message || ''}
+        onConfirm={() => {
+          if (confirmDelete?.onConfirm) {
+            confirmDelete.onConfirm();
+          }
+          setConfirmDelete(null);
+        }}
+        onCancel={() => setConfirmDelete(null)}
+      />
 
     </div>
   );

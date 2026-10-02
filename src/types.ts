@@ -48,12 +48,29 @@ export interface MataPelajaran {
   kkm: number;
 }
 
+export interface TugasMengajarItem {
+  id: string;
+  tingkat: string; // e.g. "Kelas 7", "X", etc.
+  namaMapel: string;
+  asatidzId: string; // id guru from allAsatidz
+  kkm?: number;
+}
+
 export interface Kelas {
   id: string;
   nama: string;
   tingkat: string;
   waliKelas?: string;
   kapasitas?: number;
+}
+
+export interface SantriKepribadianData {
+  akhlaq: string;
+  kebersihan: string;
+  ibadah: string;
+  kesungguhan: string;
+  disiplinDiri: string;
+  ketaatan: string;
 }
 
 export interface Santri {
@@ -65,6 +82,7 @@ export interface Santri {
   halaqah?: string;
   kamar?: string;
   status: 'Aktif' | 'Non-Aktif';
+  kepribadian?: SantriKepribadianData;
 }
 
 export interface Asatidz {
@@ -143,4 +161,15 @@ export interface PesantrenProfile {
   logoUrl: string;
   visi: string;
   misi: string[];
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  nama: string;
+  gender: 'L' | 'P';
+  ttl: string; // e.g. "DHARMASRAYA, 09 Januari 2006"
+  pendidikan: string; // e.g. "Staf Madrasah", "Sarjana (S1)", etc.
+  password: string; // e.g. "Arafah@2006"
+  foto?: string;
 }

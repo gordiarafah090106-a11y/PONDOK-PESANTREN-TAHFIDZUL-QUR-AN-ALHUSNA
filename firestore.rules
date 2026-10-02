@@ -7,133 +7,112 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128;
     }
 
-    // Helper functions for validating entities
-    function isValidPesantrenProfile(data) {
-      return data.nama is string && data.nama.size() <= 200
-        && data.nspp is string && data.nspp.size() <= 50
-        && data.alamat is string && data.alamat.size() <= 500;
-    }
-
-    function isValidAppSettings(data) {
-      return data.adminPassword is string && data.adminPassword.size() >= 3 && data.adminPassword.size() <= 100;
-    }
-
-    function isValidAcademicTerm(data) {
-      return data.id is string && data.year is string && data.label is string && data.isActive is bool;
-    }
-
-    function isValidPetinggi(data) {
-      return data.id is string && data.nama is string && data.nama.size() <= 150
-        && data.jabatan is string && data.urutan is number;
-    }
-
-    function isValidPanitiaUjian(data) {
-      return data.id is string && data.nama is string && data.nama.size() <= 150
-        && data.jabatan is string && data.tugas is string;
-    }
-
-    function isValidMataPelajaran(data) {
-      return data.id is string && data.kode is string && data.nama is string && data.kkm is number;
-    }
-
-    function isValidKelas(data) {
-      return data.id is string && data.nama is string && data.tingkat is string;
-    }
-
-    function isValidSantri(data) {
-      return data.id is string && data.nis is string && data.nama is string && data.kelasId is string;
-    }
-
-    function isValidAsatidz(data) {
-      return data.id is string && data.nama is string && data.nama.size() <= 150;
-    }
-
-    function isValidNilaiSantri(data) {
-      return data.id is string && data.termId is string && data.santriId is string
-        && data.kelasId is string && data.mapelId is string && data.nilaiAkhir is number;
-    }
-
-    function isValidJadwalUjian(data) {
-      return data.id is string && data.termId is string && data.judul is string;
-    }
-
-    function isValidPengumuman(data) {
-      return data.id is string && data.judul is string && data.konten is string;
-    }
-
-    // Default catch-all
+    // Default catch-all deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Collection match rules
+    // System initialization flag
+    match /system/{docId} {
+      allow read, write: if isValidId(docId);
+    }
+
+    // Pesantren Profile
     match /pesantrenProfile/{docId} {
       allow read: if true;
-      allow write: if isValidId(docId) && isValidPesantrenProfile(request.resource.data);
+      allow create, update: if isValidId(docId);
+      allow delete: if isValidId(docId);
     }
 
+    // Settings & Security
     match /settings/{docId} {
       allow read: if true;
-      allow write: if isValidId(docId) && isValidAppSettings(request.resource.data);
+      allow create, update: if isValidId(docId);
+      allow delete: if isValidId(docId);
     }
 
+    // Academic Terms
     match /academicTerms/{termId} {
       allow read: if true;
-      allow write: if isValidId(termId) && isValidAcademicTerm(request.resource.data);
+      allow create, update: if isValidId(termId);
+      allow delete: if isValidId(termId);
     }
 
+    // Petinggi Pesantren
     match /petinggi/{petinggiId} {
       allow read: if true;
-      allow write: if isValidId(petinggiId) && isValidPetinggi(request.resource.data);
+      allow create, update: if isValidId(petinggiId);
       allow delete: if isValidId(petinggiId);
     }
 
+    // Panitia Ujian
     match /panitiaUjian/{panitiaId} {
       allow read: if true;
-      allow write: if isValidId(panitiaId) && isValidPanitiaUjian(request.resource.data);
+      allow create, update: if isValidId(panitiaId);
       allow delete: if isValidId(panitiaId);
     }
 
+    // Mata Pelajaran
     match /mataPelajaran/{mapelId} {
       allow read: if true;
-      allow write: if isValidId(mapelId) && isValidMataPelajaran(request.resource.data);
+      allow create, update: if isValidId(mapelId);
       allow delete: if isValidId(mapelId);
     }
 
+    // Kelas
     match /kelas/{kelasId} {
       allow read: if true;
-      allow write: if isValidId(kelasId) && isValidKelas(request.resource.data);
+      allow create, update: if isValidId(kelasId);
       allow delete: if isValidId(kelasId);
     }
 
+    // Santri
     match /santri/{santriId} {
       allow read: if true;
-      allow write: if isValidId(santriId) && isValidSantri(request.resource.data);
+      allow create, update: if isValidId(santriId);
       allow delete: if isValidId(santriId);
     }
 
+    // Asatidz
     match /asatidz/{asatidzId} {
       allow read: if true;
-      allow write: if isValidId(asatidzId) && isValidAsatidz(request.resource.data);
+      allow create, update: if isValidId(asatidzId);
       allow delete: if isValidId(asatidzId);
     }
 
+    // Nilai Santri
     match /nilaiSantri/{nilaiId} {
       allow read: if true;
-      allow write: if isValidId(nilaiId) && isValidNilaiSantri(request.resource.data);
+      allow create, update: if isValidId(nilaiId);
       allow delete: if isValidId(nilaiId);
     }
 
+    // Jadwal Ujian
     match /jadwalUjian/{jadwalId} {
       allow read: if true;
-      allow write: if isValidId(jadwalId) && isValidJadwalUjian(request.resource.data);
+      allow create, update: if isValidId(jadwalId);
       allow delete: if isValidId(jadwalId);
     }
 
+    // Pengumuman
     match /pengumuman/{pengumumanId} {
       allow read: if true;
-      allow write: if isValidId(pengumumanId) && isValidPengumuman(request.resource.data);
+      allow create, update: if isValidId(pengumumanId);
       allow delete: if isValidId(pengumumanId);
+    }
+
+    // Tugas Mengajar
+    match /tugasMengajar/{tugasId} {
+      allow read: if true;
+      allow create, update: if isValidId(tugasId);
+      allow delete: if isValidId(tugasId);
+    }
+
+    // Admin Users
+    match /adminUsers/{adminId} {
+      allow read: if true;
+      allow create, update: if isValidId(adminId);
+      allow delete: if isValidId(adminId);
     }
   }
 }

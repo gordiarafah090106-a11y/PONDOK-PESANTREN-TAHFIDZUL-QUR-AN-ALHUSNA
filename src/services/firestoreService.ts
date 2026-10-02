@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   setDoc,
   deleteDoc,
@@ -21,6 +22,8 @@ import {
   Petinggi,
   RolePermissions,
   Santri,
+  TugasMengajarItem,
+  AdminUser,
 } from '../types';
 import {
   INITIAL_TERMS,
@@ -35,6 +38,8 @@ import {
   INITIAL_JADWAL,
   INITIAL_PENGUMUMAN,
   INITIAL_PERMISSIONS,
+  INITIAL_TUGAS_MENGAJAR,
+  INITIAL_ADMIN_USERS,
 } from '../data/initialData';
 
 export interface AppSettingsData {
@@ -43,19 +48,97 @@ export interface AppSettingsData {
   updatedAt?: string;
 }
 
-// Check & Seed Initial Data if database is freshly provisioned
+// Safe Chunked Batch Executor (Maximum 350 ops per batch)
+async function executeBatchOperations(
+  operations: Array<{ type: 'set' | 'delete'; path: string; docId: string; data?: unknown }>
+) {
+  const CHUNK_SIZE = 350;
+  for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+    const chunk = operations.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    for (const op of chunk) {
+      const docRef = doc(db, op.path, op.docId);
+      if (op.type === 'delete') {
+        batch.delete(docRef);
+      } else if (op.data !== undefined) {
+        const cleanData = JSON.parse(JSON.stringify(op.data)) as Record<string, unknown>;
+        batch.set(docRef, cleanData);
+      }
+    }
+    await batch.commit();
+  }
+}
+
+// Differential Collection Sync: Only deletes removed items and updates existing/new items
+async function syncCollectionDiff<T extends { id: string }>(
+  collectionName: string,
+  newItems: T[]
+) {
+  try {
+    const existingSnap = await getDocs(collection(db, collectionName));
+    const existingIds = new Set(existingSnap.docs.map((d) => d.id));
+    const newIds = new Set(newItems.map((item) => item.id));
+
+    const ops: Array<{ type: 'set' | 'delete'; path: string; docId: string; data?: unknown }> = [];
+
+    // Delete documents that are no longer in newItems
+    existingSnap.docs.forEach((d) => {
+      if (!newIds.has(d.id)) {
+        ops.push({ type: 'delete', path: collectionName, docId: d.id });
+      }
+    });
+
+    // Set or Update all items in newItems
+    newItems.forEach((item) => {
+      ops.push({ type: 'set', path: collectionName, docId: item.id, data: item });
+    });
+
+    if (ops.length > 0) {
+      await executeBatchOperations(ops);
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, collectionName);
+  }
+}
+
+// Check & Seed Initial Data ONLY ONCE on database first initialization
 export async function seedInitialDataIfEmpty() {
   testFirebaseConnection();
   try {
+    // Check bootstrap marker
+    const bootstrapRef = doc(db, 'system', 'bootstrap');
+    const bootstrapSnap = await getDoc(bootstrapRef);
+
+    if (bootstrapSnap.exists() && bootstrapSnap.data()?.initialized) {
+      // Ensure v2 collections (tugasMengajar & adminUsers) were also initialized after rules deployment
+      if (!bootstrapSnap.data()?.v2CollectionsInitialized) {
+        const tugasMengajarSnap = await getDocs(collection(db, 'tugasMengajar'));
+        if (tugasMengajarSnap.empty) {
+          await syncCollectionDiff('tugasMengajar', INITIAL_TUGAS_MENGAJAR);
+        }
+        const adminUsersSnap = await getDocs(collection(db, 'adminUsers'));
+        if (adminUsersSnap.empty) {
+          await syncCollectionDiff('adminUsers', INITIAL_ADMIN_USERS);
+        }
+        await setDoc(
+          bootstrapRef,
+          { v2CollectionsInitialized: true, updatedAt: new Date().toISOString() },
+          { merge: true }
+        );
+      }
+      // System was already bootstrapped. DO NOT re-seed, to preserve user deletions and customizations!
+      return;
+    }
+
+    console.log('Bootstrapping initial database state...');
+
     const profileSnap = await getDocs(collection(db, 'pesantrenProfile'));
     if (profileSnap.empty) {
-      console.log('Seeding initial pesantren profile to Firestore...');
       await setDoc(doc(db, 'pesantrenProfile', 'main'), INITIAL_PROFILE);
     }
 
     const settingsSnap = await getDocs(collection(db, 'settings'));
     if (settingsSnap.empty) {
-      console.log('Seeding initial app settings & security to Firestore...');
       const initialSettings: AppSettingsData = {
         adminPassword: 'admin123',
         permissions: INITIAL_PERMISSIONS,
@@ -66,105 +149,72 @@ export async function seedInitialDataIfEmpty() {
 
     const termsSnap = await getDocs(collection(db, 'academicTerms'));
     if (termsSnap.empty) {
-      console.log('Seeding initial academic terms...');
-      const batch = writeBatch(db);
-      for (const term of INITIAL_TERMS) {
-        batch.set(doc(db, 'academicTerms', term.id), term);
-      }
-      await batch.commit();
+      await syncCollectionDiff('academicTerms', INITIAL_TERMS);
     }
 
     const petinggiSnap = await getDocs(collection(db, 'petinggi'));
     if (petinggiSnap.empty) {
-      console.log('Seeding initial petinggi...');
-      const batch = writeBatch(db);
-      for (const p of INITIAL_PETINGGI) {
-        batch.set(doc(db, 'petinggi', p.id), p);
-      }
-      await batch.commit();
+      await syncCollectionDiff('petinggi', INITIAL_PETINGGI);
     }
 
     const panitiaSnap = await getDocs(collection(db, 'panitiaUjian'));
     if (panitiaSnap.empty) {
-      console.log('Seeding initial panitia...');
-      const batch = writeBatch(db);
-      for (const pan of INITIAL_PANITIA) {
-        batch.set(doc(db, 'panitiaUjian', pan.id), pan);
-      }
-      await batch.commit();
+      await syncCollectionDiff('panitiaUjian', INITIAL_PANITIA);
     }
 
     const mapelSnap = await getDocs(collection(db, 'mataPelajaran'));
     if (mapelSnap.empty) {
-      console.log('Seeding initial mata pelajaran...');
-      const batch = writeBatch(db);
-      for (const m of INITIAL_MAPEL) {
-        batch.set(doc(db, 'mataPelajaran', m.id), m);
-      }
-      await batch.commit();
+      await syncCollectionDiff('mataPelajaran', INITIAL_MAPEL);
     }
 
     const kelasSnap = await getDocs(collection(db, 'kelas'));
     if (kelasSnap.empty) {
-      console.log('Seeding initial kelas...');
-      const batch = writeBatch(db);
-      for (const k of INITIAL_KELAS) {
-        batch.set(doc(db, 'kelas', k.id), k);
-      }
-      await batch.commit();
+      await syncCollectionDiff('kelas', INITIAL_KELAS);
     }
 
     const santriSnap = await getDocs(collection(db, 'santri'));
     if (santriSnap.empty) {
-      console.log('Seeding initial santri...');
-      const batch = writeBatch(db);
-      for (const s of INITIAL_SANTRI) {
-        batch.set(doc(db, 'santri', s.id), s);
-      }
-      await batch.commit();
+      await syncCollectionDiff('santri', INITIAL_SANTRI);
     }
 
     const asatidzSnap = await getDocs(collection(db, 'asatidz'));
     if (asatidzSnap.empty) {
-      console.log('Seeding initial asatidz...');
-      const batch = writeBatch(db);
-      for (const a of INITIAL_ASATIDZ) {
-        batch.set(doc(db, 'asatidz', a.id), a);
-      }
-      await batch.commit();
+      await syncCollectionDiff('asatidz', INITIAL_ASATIDZ);
     }
 
     const nilaiSnap = await getDocs(collection(db, 'nilaiSantri'));
     if (nilaiSnap.empty) {
-      console.log('Seeding initial nilai santri...');
-      const batch = writeBatch(db);
-      for (const n of INITIAL_NILAI) {
-        batch.set(doc(db, 'nilaiSantri', n.id), n);
-      }
-      await batch.commit();
+      await syncCollectionDiff('nilaiSantri', INITIAL_NILAI);
     }
 
     const jadwalSnap = await getDocs(collection(db, 'jadwalUjian'));
     if (jadwalSnap.empty) {
-      console.log('Seeding initial jadwal ujian...');
-      const batch = writeBatch(db);
-      for (const j of INITIAL_JADWAL) {
-        batch.set(doc(db, 'jadwalUjian', j.id), j);
-      }
-      await batch.commit();
+      await syncCollectionDiff('jadwalUjian', INITIAL_JADWAL);
     }
 
     const pengumumanSnap = await getDocs(collection(db, 'pengumuman'));
     if (pengumumanSnap.empty) {
-      console.log('Seeding initial pengumuman...');
-      const batch = writeBatch(db);
-      for (const p of INITIAL_PENGUMUMAN) {
-        batch.set(doc(db, 'pengumuman', p.id), p);
-      }
-      await batch.commit();
+      await syncCollectionDiff('pengumuman', INITIAL_PENGUMUMAN);
     }
+
+    const tugasMengajarSnap = await getDocs(collection(db, 'tugasMengajar'));
+    if (tugasMengajarSnap.empty) {
+      await syncCollectionDiff('tugasMengajar', INITIAL_TUGAS_MENGAJAR);
+    }
+
+    const adminUsersSnap = await getDocs(collection(db, 'adminUsers'));
+    if (adminUsersSnap.empty) {
+      await syncCollectionDiff('adminUsers', INITIAL_ADMIN_USERS);
+    }
+
+    // Set bootstrap marker so subsequent reloads never overwrite or re-seed
+    await setDoc(bootstrapRef, {
+      initialized: true,
+      v2CollectionsInitialized: true,
+      bootstrappedAt: new Date().toISOString(),
+    });
   } catch (error) {
-    console.warn('Initial seed error or already initialized:', error);
+    console.warn('Initial seed info or already initialized:', error);
   }
 }
 
@@ -205,7 +255,7 @@ export function subscribeAcademicTerms(callback: (terms: AcademicTerm[]) => void
     (snap) => {
       const items: AcademicTerm[] = [];
       snap.forEach((docSnap) => items.push(docSnap.data() as AcademicTerm));
-      if (items.length > 0) callback(items);
+      callback(items);
     },
     (err) => handleFirestoreError(err, OperationType.LIST, path)
   );
@@ -218,6 +268,8 @@ export function subscribePetinggi(callback: (petinggi: Petinggi[]) => void) {
     (snap) => {
       const items: Petinggi[] = [];
       snap.forEach((docSnap) => items.push(docSnap.data() as Petinggi));
+      // Sort by urutan
+      items.sort((a, b) => (a.urutan || 0) - (b.urutan || 0));
       callback(items);
     },
     (err) => handleFirestoreError(err, OperationType.LIST, path)
@@ -328,6 +380,32 @@ export function subscribePengumuman(callback: (pengumuman: Pengumuman[]) => void
   );
 }
 
+export function subscribeTugasMengajar(callback: (items: TugasMengajarItem[]) => void) {
+  const path = 'tugasMengajar';
+  return onSnapshot(
+    collection(db, path),
+    (snap) => {
+      const items: TugasMengajarItem[] = [];
+      snap.forEach((docSnap) => items.push(docSnap.data() as TugasMengajarItem));
+      callback(items);
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, path)
+  );
+}
+
+export function subscribeAdminUsers(callback: (items: AdminUser[]) => void) {
+  const path = 'adminUsers';
+  return onSnapshot(
+    collection(db, path),
+    (snap) => {
+      const items: AdminUser[] = [];
+      snap.forEach((docSnap) => items.push(docSnap.data() as AdminUser));
+      callback(items);
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, path)
+  );
+}
+
 // ----------------------------------------------------
 // Mutation Helpers (Saving to Cloud)
 // ----------------------------------------------------
@@ -344,141 +422,88 @@ export async function savePesantrenProfileToCloud(profile: PesantrenProfile) {
 export async function saveAppSettingsToCloud(settings: Partial<AppSettingsData>) {
   const path = 'settings/security';
   try {
-    await setDoc(doc(db, 'settings', 'security'), {
-      ...settings,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
+    await setDoc(
+      doc(db, 'settings', 'security'),
+      {
+        ...settings,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 
 export async function saveAcademicTermsToCloud(terms: AcademicTerm[]) {
-  const path = 'academicTerms';
-  try {
-    const batch = writeBatch(db);
-    for (const term of terms) {
-      batch.set(doc(db, 'academicTerms', term.id), term);
-    }
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('academicTerms', terms);
 }
 
 export async function savePetinggiListToCloud(petinggiList: Petinggi[]) {
-  const path = 'petinggi';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    petinggiList.forEach((p) => batch.set(doc(db, path, p.id), p));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('petinggi', petinggiList);
 }
 
 export async function savePanitiaListToCloud(panitiaList: PanitiaUjian[]) {
-  const path = 'panitiaUjian';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    panitiaList.forEach((p) => batch.set(doc(db, path, p.id), p));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('panitiaUjian', panitiaList);
 }
 
 export async function saveMapelListToCloud(mapelList: MataPelajaran[]) {
-  const path = 'mataPelajaran';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    mapelList.forEach((m) => batch.set(doc(db, path, m.id), m));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('mataPelajaran', mapelList);
 }
 
 export async function saveKelasListToCloud(kelasList: Kelas[]) {
-  const path = 'kelas';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    kelasList.forEach((k) => batch.set(doc(db, path, k.id), k));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('kelas', kelasList);
 }
 
 export async function saveSantriListToCloud(santriList: Santri[]) {
-  const path = 'santri';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    santriList.forEach((s) => batch.set(doc(db, path, s.id), s));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('santri', santriList);
 }
 
 export async function saveAsatidzListToCloud(asatidzList: Asatidz[]) {
-  const path = 'asatidz';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    asatidzList.forEach((a) => batch.set(doc(db, path, a.id), a));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('asatidz', asatidzList);
 }
 
 export async function saveNilaiBatchToCloud(nilaiBatch: NilaiSantri[]) {
   const path = 'nilaiSantri';
   try {
-    const batch = writeBatch(db);
-    for (const n of nilaiBatch) {
-      batch.set(doc(db, path, n.id), n);
-    }
-    await batch.commit();
+    const ops = nilaiBatch.map((n) => ({
+      type: 'set' as const,
+      path,
+      docId: n.id,
+      data: n,
+    }));
+    await executeBatchOperations(ops);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function saveNilaiListToCloud(nilaiList: NilaiSantri[]) {
+  await syncCollectionDiff('nilaiSantri', nilaiList);
+}
+
+export async function deleteNilaiFromCloud(id: string) {
+  const path = 'nilaiSantri';
+  try {
+    await deleteDoc(doc(db, path, id));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 
 export async function saveJadwalListToCloud(jadwalList: JadwalUjianItem[]) {
-  const path = 'jadwalUjian';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    jadwalList.forEach((j) => batch.set(doc(db, path, j.id), j));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('jadwalUjian', jadwalList);
 }
 
 export async function savePengumumanListToCloud(pengumumanList: Pengumuman[]) {
-  const path = 'pengumuman';
-  try {
-    const currentSnap = await getDocs(collection(db, path));
-    const batch = writeBatch(db);
-    currentSnap.forEach((d) => batch.delete(d.ref));
-    pengumumanList.forEach((p) => batch.set(doc(db, path, p.id), p));
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
-  }
+  await syncCollectionDiff('pengumuman', pengumumanList);
 }
+
+export async function saveTugasMengajarToCloud(tugasList: TugasMengajarItem[]) {
+  await syncCollectionDiff('tugasMengajar', tugasList);
+}
+
+export async function saveAdminUsersToCloud(adminUsersList: AdminUser[]) {
+  await syncCollectionDiff('adminUsers', adminUsersList);
+}
+

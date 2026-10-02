@@ -15,14 +15,13 @@ import {
   Shield,
   UserCheck,
   ChevronDown,
-  LogOut,
-  KeyRound,
   Menu,
   X,
   Plus,
+  ClipboardEdit,
 } from 'lucide-react';
 
-export type TabKey = 'dashboard' | 'profil' | 'lembaga' | 'asatidz' | 'rekapan';
+export type TabKey = 'dashboard' | 'profil' | 'lembaga' | 'asatidz' | 'rekapan' | 'input_nilai';
 
 export interface SubMenuItem {
   id: string;
@@ -83,7 +82,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   jadwalCount = 0,
 }) => {
   const [showTermModal, setShowTermModal] = useState(false);
-  const [showAsatidzPicker, setShowAsatidzPicker] = useState(false);
   const [newYear, setNewYear] = useState('2026/2027');
   const [newSemester, setNewSemester] = useState<'ganjil' | 'genap'>('ganjil');
 
@@ -94,6 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     lembaga: true,
     asatidz: true,
     rekapan: true,
+    input_nilai: true,
   });
 
   const toggleExpandTab = (key: TabKey) => {
@@ -117,68 +116,80 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'DASBOARD',
       sublabel: 'Statistik & Ringkasan',
       icon: LayoutDashboard,
-      subItems: [
-        { id: 'statistik', label: 'Ringkasan & Statistik' },
-        { id: 'pengumuman', label: 'Papan Pengumuman' },
-      ],
+      subItems: [],
     },
     {
       key: 'profil',
       label: 'PROFIL PESANTREN',
-      sublabel: currentRole === 'admin' ? 'Petinggi, Panitia & Sandi' : 'Informasi Pesantren',
+      sublabel: currentRole === 'admin' ? 'Petinggi, Panitia & Sandi' : 'Pimpinan & Panitia Ujian',
       icon: Landmark,
-      subItems: [
-        { id: 'petinggi', label: 'Pimpinan Pesantren', badge: petinggiCount > 0 ? petinggiCount : undefined },
-        { id: 'panitia', label: 'Panitia Ujian', badge: panitiaCount > 0 ? panitiaCount : undefined },
-        { id: 'semester', label: 'Pengaturan Semester', badge: allTerms.length > 0 ? allTerms.length : undefined },
-        { id: 'identitas', label: 'Identitas Pesantren' },
-        ...(currentRole === 'admin'
+      subItems:
+        currentRole === 'admin'
           ? [
-              { id: 'keamanan', label: 'Ganti Password Admin', adminOnly: true },
-              { id: 'akses', label: 'Hak Akses Pengguna', adminOnly: true },
+              { id: 'petinggi', label: 'PIMPINAN PESANTREN', badge: petinggiCount > 0 ? petinggiCount : undefined },
+              { id: 'panitia', label: 'PANITIA UJIAN', badge: panitiaCount > 0 ? panitiaCount : undefined },
+              { id: 'semester', label: 'PENGATURAN SEMESTER', badge: allTerms.length > 0 ? allTerms.length : undefined },
+              { id: 'identitas', label: 'IDENTITAS PESANTREN' },
+              { id: 'keamanan', label: 'ADMIN APLIKASI', adminOnly: true },
+              { id: 'akses', label: 'HAK AKSES PENGGUNA', adminOnly: true },
             ]
-          : []),
-      ],
+          : [
+              { id: 'petinggi', label: 'PIMPINAN PESANTREN', badge: petinggiCount > 0 ? petinggiCount : undefined },
+              { id: 'panitia', label: 'PANITIA UJIAN', badge: panitiaCount > 0 ? panitiaCount : undefined },
+            ],
     },
     {
       key: 'lembaga',
       label: 'LEMBAGA',
-      sublabel: 'Daftar Kelas, Mapel & Jadwal',
+      sublabel: currentRole === 'admin' ? 'Santri, Kepribadian & Jadwal' : 'Data Santri & Jadwal Ujian',
       icon: Building2,
-      subItems: [
-        { id: 'kelas', label: 'Daftar Kelas & Santri', badge: kelasCount > 0 ? kelasCount : undefined },
-        { id: 'mapel', label: 'Mata Pelajaran', badge: mapelCount > 0 ? mapelCount : undefined },
-        { id: 'jadwal', label: 'Jadwal Ujian (PDF/Gambar)', badge: jadwalCount > 0 ? jadwalCount : undefined },
-      ],
+      subItems:
+        currentRole === 'admin'
+          ? [
+              { id: 'kelas', label: 'DATA SANTRI', badge: kelasCount > 0 ? kelasCount : undefined },
+              { id: 'kepribadian', label: 'KEPRIBADIAN SANTRI', adminOnly: true },
+              { id: 'jadwal', label: 'JADWAL UJIAN', badge: jadwalCount > 0 ? jadwalCount : undefined },
+            ]
+          : [
+              { id: 'kelas', label: 'DATA SANTRI', badge: kelasCount > 0 ? kelasCount : undefined },
+              { id: 'jadwal', label: 'JADWAL UJIAN', badge: jadwalCount > 0 ? jadwalCount : undefined },
+            ],
     },
-    {
-      key: 'asatidz',
-      label: 'ASATIDZ',
-      sublabel: currentRole === 'admin' ? 'Kelola Guru & Nilai Ujian' : 'Input Nilai Ujian',
-      icon: GraduationCap,
-      badge: currentRole === 'asatidz' ? 'Input Nilai' : undefined,
-      subItems: currentRole === 'admin'
-        ? [
-            { id: 'akun', label: 'Daftar Akun Guru', badge: allAsatidz.length > 0 ? allAsatidz.length : undefined },
-            { id: 'mengajar', label: 'Atur Tugas Mengajar' },
-            { id: 'input_nilai', label: 'Input Nilai Ujian Santri' },
-          ]
-        : [
-            { id: 'mengajar', label: 'Jadwal Mengajar Saya' },
-            { id: 'input_nilai', label: 'Input Nilai Ujian Santri' },
-          ],
-    },
-    {
-      key: 'rekapan',
-      label: 'HASIL REKAPAN',
-      sublabel: 'Cetak & Rekap Excel',
-      icon: FileSpreadsheet,
-      badge: 'Excel',
-      subItems: [
-        { id: 'rekap_guru', label: 'Rekap Nilai Guru (Excel)' },
-        { id: 'cetak_rapor', label: 'Cetak Lembar Nilai / Rapor' },
-      ],
-    },
+    ...(currentRole === 'admin'
+      ? [
+          {
+            key: 'asatidz' as TabKey,
+            label: 'ASATIDZ',
+            sublabel: 'Kelola Guru & Rekapan',
+            icon: GraduationCap,
+            subItems: [
+              { id: 'akun', label: 'DAFTAR AKUN GURU', badge: allAsatidz.length > 0 ? allAsatidz.length : undefined },
+              { id: 'mengajar', label: 'ATUR TUGAS MENGAJAR' },
+              { id: 'rekapan', label: 'REKAPAN' },
+            ],
+          },
+          {
+            key: 'rekapan' as TabKey,
+            label: 'RAPORT',
+            sublabel: 'Edit Rapor & Cetak PDF',
+            icon: FileSpreadsheet,
+            badge: 'PDF',
+            subItems: [
+              { id: 'rekap_guru', label: 'EDIT RAPOR' },
+              { id: 'cetak_rapor', label: 'CETAK RAPORT' },
+            ],
+          },
+        ]
+      : [
+          {
+            key: 'input_nilai' as TabKey,
+            label: 'INPUT NILAI',
+            sublabel: 'Input Nilai Mapel Santri',
+            icon: ClipboardEdit,
+            badge: 'GURU',
+            subItems: [],
+          },
+        ]),
   ];
 
   const handleAddNewTerm = (e: React.FormEvent) => {
@@ -253,28 +264,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        {/* 2. Academic Semester Switcher Pill inside Sidebar */}
-        <div className="px-3 pt-3 pb-2 border-b border-emerald-800/40">
-          <div className="bg-emerald-900/70 rounded-xl p-2.5 border border-emerald-700/50">
-            <div className="flex items-center justify-between text-[11px] text-emerald-300 mb-1.5 font-semibold">
-              <span className="flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                <span>SEMESTER AKTIF</span>
-              </span>
-              <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-700/80 text-white font-bold">
-                {currentTerm.semester.toUpperCase()}
-              </span>
-            </div>
-
+        {/* 2. Academic Semester Switcher Pill inside Sidebar (Compact) */}
+        <div className="px-3 py-2 border-b border-emerald-800/40">
+          {currentRole === 'admin' ? (
             <button
               id="sidebar-btn-ganti-semester"
               onClick={() => setShowTermModal(true)}
-              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-950 text-white text-xs font-bold transition border border-emerald-600/40 text-left group"
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-emerald-900/70 hover:bg-emerald-900 text-white text-[11px] font-bold transition border border-emerald-700/50 text-left group cursor-pointer"
             >
-              <span className="truncate">{currentTerm.label}</span>
+              <span className="flex items-center gap-1.5 truncate">
+                <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="truncate">{currentTerm.label}</span>
+              </span>
               <ChevronDown className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform flex-shrink-0 ml-1" />
             </button>
-          </div>
+          ) : (
+            <div className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-emerald-900/50 text-emerald-100 text-[11px] font-semibold border border-emerald-800/60">
+              <span className="flex items-center gap-1.5 truncate">
+                <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="truncate">{currentTerm.label}</span>
+              </span>
+              <span className="px-1.5 py-0.5 rounded text-[9px] bg-emerald-800 text-emerald-200 font-bold shrink-0">
+                AKTIF
+              </span>
+            </div>
+          )}
         </div>
 
         {/* 3. Navigation Links List */}
@@ -293,19 +307,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {/* Main Menu Button */}
                 <div className="flex items-center gap-1">
                   <button
+                    type="button"
                     id={`sidebar-nav-${item.key}`}
                     onClick={() => {
+                      const defaultSubId = item.subItems[0]?.id;
                       if (!isActive) {
-                        onSelectTab(item.key, item.subItems[0]?.id);
-                        if (onSelectSubTab && item.subItems[0]?.id) {
-                          onSelectSubTab(item.subItems[0].id);
+                        onSelectTab(item.key, defaultSubId);
+                        if (onSelectSubTab && defaultSubId) {
+                          onSelectSubTab(defaultSubId);
                         }
                         setExpandedTabs((prev) => ({ ...prev, [item.key]: true }));
+                        if (item.subItems.length === 0) {
+                          setIsMobileOpen(false);
+                        }
                       } else {
-                        toggleExpandTab(item.key);
+                        if (!isExpanded) {
+                          setExpandedTabs((prev) => ({ ...prev, [item.key]: true }));
+                          if (defaultSubId && (!activeSubTab || !item.subItems.some((s) => s.id === activeSubTab))) {
+                            onSelectTab(item.key, defaultSubId);
+                            if (onSelectSubTab) onSelectSubTab(defaultSubId);
+                          }
+                        } else {
+                          toggleExpandTab(item.key);
+                        }
                       }
                     }}
-                    className={`flex-1 flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs tracking-wide transition-all text-left group ${
+                    className={`flex-1 flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs tracking-wide transition-all text-left group cursor-pointer ${
                       isActive
                         ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md ring-1 ring-amber-400/40'
                         : 'text-emerald-100/90 hover:bg-emerald-800/50 hover:text-white'
@@ -384,7 +411,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                   : 'bg-emerald-500/60 group-hover:bg-amber-300'
                               }`}
                             />
-                            <span className="truncate">{subItem.label}</span>
+                            <span className="truncate uppercase tracking-wider font-semibold">{subItem.label}</span>
                           </div>
 
                           {subItem.badge !== undefined && subItem.badge !== '' && (
@@ -406,101 +433,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             );
           })}
-        </div>
-
-        {/* 4. Bottom User Role & Authentication Area */}
-        <div className="p-3 border-t border-emerald-800/60 bg-emerald-950/80">
-          {currentRole === 'admin' ? (
-            <div className="bg-emerald-900/50 rounded-xl p-2.5 border border-emerald-700/60">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-700 text-white flex items-center justify-center flex-shrink-0">
-                  <Shield className="w-4 h-4 text-amber-300" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-white truncate">Administrator</p>
-                  <p className="text-[10px] text-emerald-300 font-medium">Akses Penuh Pengelolaan</p>
-                </div>
-              </div>
-
-              <button
-                id="sidebar-btn-switch-to-asatidz"
-                onClick={onSwitchToAsatidz}
-                className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-800/80 hover:bg-emerald-800 text-[11px] font-semibold text-emerald-100 transition border border-emerald-600/40"
-              >
-                <GraduationCap className="w-3.5 h-3.5 text-amber-300" />
-                <span>Beralih ke Portal Asatidz</span>
-              </button>
-            </div>
-          ) : (
-            <div className="bg-amber-950/40 rounded-xl p-2.5 border border-amber-800/50">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg bg-amber-600 text-white flex items-center justify-center flex-shrink-0">
-                  <GraduationCap className="w-4 h-4 text-white" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-amber-200 truncate">
-                    {currentAsatidz ? currentAsatidz.nama : 'Akun Guru'}
-                  </p>
-                  <p className="text-[10px] text-amber-400/80 font-medium">Portal Penginput Nilai</p>
-                </div>
-              </div>
-
-              {/* Asatidz Account Picker */}
-              <div className="relative mb-2">
-                <button
-                  onClick={() => setShowAsatidzPicker(!showAsatidzPicker)}
-                  className="w-full flex items-center justify-between px-2 py-1 rounded bg-black/20 text-[11px] text-amber-200 hover:bg-black/30 border border-amber-700/40"
-                >
-                  <span className="truncate">Ganti Akun Asatidz</span>
-                  <ChevronDown className="w-3 h-3 text-amber-300 ml-1 flex-shrink-0" />
-                </button>
-
-                {showAsatidzPicker && (
-                  <div className="absolute bottom-full left-0 right-0 mb-1 bg-slate-900 border border-emerald-700 rounded-xl shadow-2xl py-1 z-50 max-h-48 overflow-y-auto">
-                    <div className="px-2.5 py-1 text-[10px] font-bold text-amber-400 uppercase border-b border-slate-800">
-                      Pilih Nama Ustadz / Ustadzah
-                    </div>
-                    {allAsatidz.map((guru) => (
-                      <button
-                        key={guru.id}
-                        onClick={() => {
-                          onSelectAsatidz(guru);
-                          setShowAsatidzPicker(false);
-                        }}
-                        className={`w-full text-left px-2.5 py-1.5 text-xs hover:bg-emerald-900/60 transition ${
-                          currentAsatidz?.id === guru.id ? 'font-bold text-amber-300 bg-emerald-950' : 'text-slate-200'
-                        }`}
-                      >
-                        {guru.nama}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Login Admin Button requiring Password */}
-              <button
-                id="sidebar-btn-login-admin"
-                onClick={onSwitchToAdmin}
-                className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-[11px] font-bold text-white transition shadow-sm"
-              >
-                <KeyRound className="w-3.5 h-3.5 text-amber-300" />
-                <span>Masuk Akun Admin</span>
-              </button>
-            </div>
-          )}
-
-          {/* Logout / Exit button */}
-          {onLogout && (
-            <button
-              id="sidebar-btn-logout"
-              onClick={onLogout}
-              className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg bg-red-950/50 hover:bg-rose-900/80 text-rose-200 hover:text-white text-[11px] font-bold transition border border-rose-800/40"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Keluar dari Aplikasi</span>
-            </button>
-          )}
         </div>
       </aside>
 

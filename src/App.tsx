@@ -13,6 +13,8 @@ import {
   RoleType,
   Santri,
   Pengumuman,
+  TugasMengajarItem,
+  AdminUser,
 } from './types';
 import {
   INITIAL_TERMS,
@@ -27,6 +29,8 @@ import {
   INITIAL_JADWAL,
   INITIAL_PERMISSIONS,
   INITIAL_PENGUMUMAN,
+  INITIAL_TUGAS_MENGAJAR,
+  INITIAL_ADMIN_USERS,
 } from './data/initialData';
 import {
   seedInitialDataIfEmpty,
@@ -42,6 +46,8 @@ import {
   subscribeNilaiSantri,
   subscribeJadwalUjian,
   subscribePengumuman,
+  subscribeTugasMengajar,
+  subscribeAdminUsers,
   savePesantrenProfileToCloud,
   saveAppSettingsToCloud,
   saveAcademicTermsToCloud,
@@ -52,8 +58,11 @@ import {
   saveSantriListToCloud,
   saveAsatidzListToCloud,
   saveNilaiBatchToCloud,
+  deleteNilaiFromCloud,
   saveJadwalListToCloud,
   savePengumumanListToCloud,
+  saveTugasMengajarToCloud,
+  saveAdminUsersToCloud,
 } from './services/firestoreService';
 import { Sidebar, TabKey } from './components/Sidebar';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
@@ -62,7 +71,9 @@ import { ProfilPesantrenView } from './components/ProfilPesantrenView';
 import { LembagaView } from './components/LembagaView';
 import { AsatidzView } from './components/AsatidzView';
 import { RekapanView } from './components/RekapanView';
+import { InputNilaiAsatidzView } from './components/InputNilaiAsatidzView';
 import { LoginView } from './components/LoginView';
+import { isDummyInitialSantri } from './utils/dataSyncHelpers';
 import { Menu, Shield, GraduationCap, Lock, Cloud, CloudCheck, RefreshCw, LogOut } from 'lucide-react';
 
 export default function App() {
@@ -160,6 +171,16 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_PENGUMUMAN;
   });
 
+  const [allTugasMengajar, setAllTugasMengajar] = useState<TugasMengajarItem[]>(() => {
+    const saved = localStorage.getItem('alhusna_tugas_mengajar');
+    return saved ? JSON.parse(saved) : INITIAL_TUGAS_MENGAJAR;
+  });
+
+  const [allAdminUsers, setAllAdminUsers] = useState<AdminUser[]>(() => {
+    const saved = localStorage.getItem('alhusna_admin_users');
+    return saved ? JSON.parse(saved) : INITIAL_ADMIN_USERS;
+  });
+
   // Current active navigation tab & sub-tab
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
   const [activeSubTab, setActiveSubTab] = useState<string>('petinggi');
@@ -174,8 +195,60 @@ export default function App() {
       else if (tab === 'lembaga') setActiveSubTab('kelas');
       else if (tab === 'asatidz') setActiveSubTab(currentRole === 'admin' ? 'akun' : 'mengajar');
       else if (tab === 'rekapan') setActiveSubTab('rekap_guru');
+      else if (tab === 'input_nilai') setActiveSubTab('input_nilai');
     }
   };
+
+  // Ensure Asatidz role cannot stay on restricted admin tabs (asatidz, rekapan)
+  useEffect(() => {
+    if (currentRole === 'asatidz' && (activeTab === 'asatidz' || activeTab === 'rekapan')) {
+      setActiveTab('input_nilai');
+    }
+    if (
+      currentRole === 'asatidz' &&
+      activeTab === 'profil' &&
+      ['identitas', 'keamanan', 'semester'].includes(activeSubTab)
+    ) {
+      setActiveSubTab('petinggi');
+    }
+    if (
+      currentRole === 'asatidz' &&
+      activeTab === 'lembaga' &&
+      activeSubTab === 'kepribadian'
+    ) {
+      setActiveSubTab('kelas');
+    }
+  }, [currentRole, activeTab, activeSubTab]);
+
+  // Safely normalize legacy tingkat names in-place and purge hardcoded dummy santri if real santri exist
+  useEffect(() => {
+    const legacyMap: Record<string, Kelas['tingkat']> = {
+      'Kelas 7': 'Kelas 1',
+      'Kelas 8': 'Kelas 2',
+      'Kelas 9': 'Kelas 3',
+      Takhasus: 'Kelas 4',
+    };
+    const hasLegacyTingkat = allKelas.some((k) => Boolean(legacyMap[k.tingkat]));
+    if (hasLegacyTingkat) {
+      const normalizedKelas = allKelas.map((k) =>
+        legacyMap[k.tingkat] ? { ...k, tingkat: legacyMap[k.tingkat] } : k
+      );
+      setAllKelas(normalizedKelas);
+      localStorage.setItem('alhusna_kelas', JSON.stringify(normalizedKelas));
+      saveKelasListToCloud(normalizedKelas).catch(console.error);
+    }
+  }, [allKelas]);
+
+  useEffect(() => {
+    const hasRealSantri = allSantri.some((s) => !isDummyInitialSantri(s.id));
+    const hasDummySantri = allSantri.some((s) => isDummyInitialSantri(s.id));
+    if (hasRealSantri && hasDummySantri) {
+      const cleanedSantri = allSantri.filter((s) => !isDummyInitialSantri(s.id));
+      setAllSantri(cleanedSantri);
+      localStorage.setItem('alhusna_santri', JSON.stringify(cleanedSantri));
+      saveSantriListToCloud(cleanedSantri).catch(console.error);
+    }
+  }, [allSantri]);
 
   // --- Real-time Firestore Cloud Synchronization ---
   useEffect(() => {
@@ -309,6 +382,22 @@ export default function App() {
       }
     });
 
+    // 13. Tugas Mengajar listener
+    const unsubTugasMengajar = subscribeTugasMengajar((data) => {
+      if (data) {
+        setAllTugasMengajar(data);
+        localStorage.setItem('alhusna_tugas_mengajar', JSON.stringify(data));
+      }
+    });
+
+    // 14. Admin Users listener
+    const unsubAdminUsers = subscribeAdminUsers((data) => {
+      if (data && data.length > 0) {
+        setAllAdminUsers(data);
+        localStorage.setItem('alhusna_admin_users', JSON.stringify(data));
+      }
+    });
+
     return () => {
       isMounted = false;
       unsubProfile();
@@ -323,67 +412,94 @@ export default function App() {
       unsubNilai();
       unsubJadwal();
       unsubPengumuman();
+      unsubTugasMengajar();
+      unsubAdminUsers();
     };
   }, []);
 
   // --- Synchronized Cloud Mutation Handlers ---
+  const handleUpdateAdminUsers = (updated: AdminUser[]) => {
+    setAllAdminUsers(updated);
+    localStorage.setItem('alhusna_admin_users', JSON.stringify(updated));
+    saveAdminUsersToCloud(updated).catch(console.error);
+  };
+
+  // --- Synchronized Cloud Mutation Handlers ---
   const handleUpdateProfile = (newProfile: PesantrenProfile) => {
     setProfile(newProfile);
+    localStorage.setItem('alhusna_profile', JSON.stringify(newProfile));
     savePesantrenProfileToCloud(newProfile).catch(console.error);
   };
 
   const handleUpdatePetinggi = (list: Petinggi[]) => {
     setPetinggiList(list);
+    localStorage.setItem('alhusna_petinggi', JSON.stringify(list));
     savePetinggiListToCloud(list).catch(console.error);
   };
 
   const handleUpdatePanitia = (list: PanitiaUjian[]) => {
     setPanitiaList(list);
+    localStorage.setItem('alhusna_panitia', JSON.stringify(list));
     savePanitiaListToCloud(list).catch(console.error);
   };
 
   const handleUpdatePermissions = (perms: { admin: RolePermissions; asatidz: RolePermissions }) => {
     setPermissions(perms);
+    localStorage.setItem('alhusna_permissions', JSON.stringify(perms));
     saveAppSettingsToCloud({ permissions: perms }).catch(console.error);
   };
 
   const handleUpdateAdminPassword = (newPassword: string) => {
     setAdminPassword(newPassword);
+    localStorage.setItem('alhusna_admin_password', newPassword);
     saveAppSettingsToCloud({ adminPassword: newPassword }).catch(console.error);
   };
 
   const handleUpdateMapel = (list: MataPelajaran[]) => {
     setAllMapel(list);
+    localStorage.setItem('alhusna_mapel', JSON.stringify(list));
     saveMapelListToCloud(list).catch(console.error);
   };
 
   const handleUpdateKelas = (list: Kelas[]) => {
     setAllKelas(list);
+    localStorage.setItem('alhusna_kelas', JSON.stringify(list));
     saveKelasListToCloud(list).catch(console.error);
   };
 
   const handleUpdateSantri = (list: Santri[]) => {
     setAllSantri(list);
+    localStorage.setItem('alhusna_santri', JSON.stringify(list));
     saveSantriListToCloud(list).catch(console.error);
   };
 
   const handleUpdateAsatidz = (list: Asatidz[]) => {
     setAllAsatidz(list);
+    localStorage.setItem('alhusna_asatidz', JSON.stringify(list));
     saveAsatidzListToCloud(list).catch(console.error);
   };
 
   const handleUpdateJadwal = (list: JadwalUjianItem[]) => {
     setAllJadwal(list);
+    localStorage.setItem('alhusna_jadwal', JSON.stringify(list));
     saveJadwalListToCloud(list).catch(console.error);
   };
 
   const handleSavePengumuman = (list: Pengumuman[]) => {
     setAllPengumuman(list);
+    localStorage.setItem('alhusna_pengumuman', JSON.stringify(list));
     savePengumumanListToCloud(list).catch(console.error);
+  };
+
+  const handleUpdateTugasMengajar = (list: TugasMengajarItem[]) => {
+    setAllTugasMengajar(list);
+    localStorage.setItem('alhusna_tugas_mengajar', JSON.stringify(list));
+    saveTugasMengajarToCloud(list).catch(console.error);
   };
 
   const handleUpdateTerms = (list: AcademicTerm[]) => {
     setAllTerms(list);
+    localStorage.setItem('alhusna_terms', JSON.stringify(list));
     saveAcademicTermsToCloud(list).catch(console.error);
   };
 
@@ -394,13 +510,17 @@ export default function App() {
       isActive: t.id === selectedTerm.id,
     }));
     setAllTerms(updated);
-    setCurrentTerm({ ...selectedTerm, isActive: true });
+    const active = { ...selectedTerm, isActive: true };
+    setCurrentTerm(active);
+    localStorage.setItem('alhusna_terms', JSON.stringify(updated));
+    localStorage.setItem('alhusna_current_term', JSON.stringify(active));
     saveAcademicTermsToCloud(updated).catch(console.error);
   };
 
   const handleAddTerm = (newTerm: AcademicTerm) => {
     const updated = [...allTerms, newTerm];
     setAllTerms(updated);
+    localStorage.setItem('alhusna_terms', JSON.stringify(updated));
     saveAcademicTermsToCloud(updated).catch(console.error);
   };
 
@@ -408,11 +528,28 @@ export default function App() {
   const handleSaveNilaiBatch = (savedBatch: NilaiSantri[]) => {
     setAllNilai((prev) => {
       const filtered = prev.filter(
-        (p) => !savedBatch.some((s) => s.termId === p.termId && s.santriId === p.santriId && s.mapelId === p.mapelId)
+        (p) =>
+          !savedBatch.some(
+            (s) =>
+              s.termId === p.termId &&
+              s.santriId === p.santriId &&
+              s.mapelId.trim().toLowerCase() === p.mapelId.trim().toLowerCase()
+          )
       );
-      return [...filtered, ...savedBatch];
+      const updated = [...filtered, ...savedBatch];
+      localStorage.setItem('alhusna_nilai', JSON.stringify(updated));
+      return updated;
     });
     saveNilaiBatchToCloud(savedBatch).catch(console.error);
+  };
+
+  const handleDeleteNilai = (id: string) => {
+    setAllNilai((prev) => {
+      const updated = prev.filter((n) => n.id !== id);
+      localStorage.setItem('alhusna_nilai', JSON.stringify(updated));
+      return updated;
+    });
+    deleteNilaiFromCloud(id).catch(console.error);
   };
 
   // Switch Role logic
@@ -459,6 +596,7 @@ export default function App() {
         onSelectTerm={handleSelectTerm}
         adminPassword={adminPassword}
         allAsatidz={allAsatidz}
+        allAdminUsers={allAdminUsers}
         onLoginSuccess={handleLoginSuccess}
       />
     );
@@ -510,7 +648,7 @@ export default function App() {
 
             <div>
               <h2 className="text-sm sm:text-base font-extrabold text-slate-800 flex items-center gap-2">
-                <span>{activeTab.toUpperCase()}</span>
+                <span>{activeTab === 'input_nilai' ? 'INPUT NILAI SANTRI' : activeTab.toUpperCase()}</span>
                 <span className="hidden sm:inline-block w-1.5 h-1.5 rounded-full bg-emerald-600" />
                 <span className="hidden sm:inline-block text-xs font-semibold text-emerald-800">
                   {currentTerm.label}
@@ -561,18 +699,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Quick Switch to Admin button if in teacher mode */}
-            {currentRole === 'asatidz' && (
-              <button
-                onClick={handleRequestSwitchToAdmin}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-bold border border-emerald-200 transition"
-                title="Masuk sebagai Administrator"
-              >
-                <Lock className="w-3.5 h-3.5 text-emerald-700" />
-                <span className="hidden md:inline">Masuk Admin</span>
-              </button>
-            )}
-
             {/* Logout button */}
             <button
               onClick={handleLogout}
@@ -596,6 +722,7 @@ export default function App() {
               allMapel={allMapel}
               allAsatidz={allAsatidz}
               allNilai={allNilai}
+              allTugasMengajar={allTugasMengajar}
               allPengumuman={allPengumuman}
               onSavePengumuman={handleSavePengumuman}
               currentRole={currentRole}
@@ -617,6 +744,8 @@ export default function App() {
               currentRole={currentRole}
               adminPassword={adminPassword}
               onUpdateAdminPassword={handleUpdateAdminPassword}
+              allAdminUsers={allAdminUsers}
+              onUpdateAdminUsers={handleUpdateAdminUsers}
               allTerms={allTerms}
               currentTerm={currentTerm}
               onSelectTerm={handleSelectTerm}
@@ -637,13 +766,28 @@ export default function App() {
               onUpdateSantri={handleUpdateSantri}
               allJadwal={allJadwal}
               onUpdateJadwal={handleUpdateJadwal}
+              allAsatidz={allAsatidz}
               currentRole={currentRole}
               activeSubTab={activeSubTab}
               onSelectSubTab={(sub) => setActiveSubTab(sub)}
             />
           )}
 
-          {activeTab === 'asatidz' && (
+          {activeTab === 'input_nilai' && (
+            <InputNilaiAsatidzView
+              currentTerm={currentTerm}
+              activeGuru={currentActiveAsatidz || allAsatidz[0]}
+              allAsatidz={allAsatidz}
+              allKelas={allKelas}
+              allSantri={allSantri}
+              allMapel={allMapel}
+              allTugasMengajar={allTugasMengajar}
+              allNilai={allNilai}
+              onSaveNilaiBatch={handleSaveNilaiBatch}
+            />
+          )}
+
+          {activeTab === 'asatidz' && currentRole === 'admin' && (
             <AsatidzView
               currentTerm={currentTerm}
               allAsatidz={allAsatidz}
@@ -652,6 +796,8 @@ export default function App() {
               allMapel={allMapel}
               allSantri={allSantri}
               allNilai={allNilai}
+              allTugasMengajar={allTugasMengajar}
+              onUpdateTugasMengajar={handleUpdateTugasMengajar}
               onSaveNilaiBatch={handleSaveNilaiBatch}
               currentRole={currentRole}
               currentActiveAsatidz={currentActiveAsatidz}
@@ -662,7 +808,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'rekapan' && (
+          {activeTab === 'rekapan' && currentRole === 'admin' && (
             <RekapanView
               currentTerm={currentTerm}
               allNilai={allNilai}
@@ -670,8 +816,11 @@ export default function App() {
               allKelas={allKelas}
               allMapel={allMapel}
               allAsatidz={allAsatidz}
+              allTugasMengajar={allTugasMengajar}
               profile={profile}
               currentRole={currentRole}
+              onSaveNilaiBatch={handleSaveNilaiBatch}
+              onDeleteNilai={handleDeleteNilai}
               activeSubTab={activeSubTab}
               onSelectSubTab={(sub) => setActiveSubTab(sub)}
             />

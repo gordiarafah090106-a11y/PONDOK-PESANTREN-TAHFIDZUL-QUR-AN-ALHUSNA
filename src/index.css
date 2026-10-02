@@ -8,6 +8,24 @@
     padding: 0;
   }
 
+  /* Login page sleek scrollbar */
+  .login-scroll::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  .login-scroll::-webkit-scrollbar-track {
+    background: rgba(2, 44, 34, 0.4);
+  }
+  
+  .login-scroll::-webkit-scrollbar-thumb {
+    background: #059669;
+    border-radius: 9999px;
+  }
+  
+  .login-scroll::-webkit-scrollbar-thumb:hover {
+    background: #10b981;
+  }
+
   /* Custom sleek scrollbar placed between green sidebar and white content */
   .sidebar-scroll::-webkit-scrollbar {
     width: 6px;
@@ -44,4 +62,54 @@
     background: #94a3b8;
   }
 }
+
+.font-amiri {
+  font-family: 'Amiri', 'Traditional Arabic', 'Times New Roman', serif;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  html,
+  body,
+  #root,
+  .main-content-scroll {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
+  aside,
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  .raport-sheet-page {
+    page-break-after: always;
+    break-after: page;
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .raport-sheet-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}
+
 

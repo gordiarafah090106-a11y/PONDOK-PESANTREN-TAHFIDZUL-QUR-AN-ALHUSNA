@@ -9,6 +9,7 @@ import {
   PesantrenProfile,
   RoleType,
   Santri,
+  TugasMengajarItem,
 } from '../types';
 import {
   Users,
@@ -16,7 +17,6 @@ import {
   School,
   CheckCircle,
   Sparkles,
-  Layers,
   Award,
   Bell,
   Plus,
@@ -24,13 +24,17 @@ import {
   Edit2,
   Pin,
   Calendar,
-  AlertCircle,
   FileText,
   Search,
-  Check,
   X,
+  ClipboardEdit,
 } from 'lucide-react';
-import { TabKey } from './Navbar';
+import { ConfirmModal } from './ConfirmModal';
+import { TabKey } from './Sidebar';
+import {
+  doesTugasBelongToAsatidz,
+  getAllActiveSantriInExistingKelas,
+} from '../utils/dataSyncHelpers';
 
 interface DashboardViewProps {
   profile: PesantrenProfile;
@@ -40,11 +44,12 @@ interface DashboardViewProps {
   allMapel: MataPelajaran[];
   allAsatidz: Asatidz[];
   allNilai: NilaiSantri[];
+  allTugasMengajar?: TugasMengajarItem[];
   allPengumuman: Pengumuman[];
   onSavePengumuman: (list: Pengumuman[]) => void;
   currentRole: RoleType;
   currentTeacherAccount?: Asatidz | null;
-  onNavigate: (tab: TabKey) => void;
+  onNavigate: (tab: TabKey, subTab?: string) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -52,21 +57,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   currentTerm,
   allSantri,
   allKelas,
-  allMapel,
   allAsatidz,
   allNilai,
+  allTugasMengajar = [],
   allPengumuman,
   onSavePengumuman,
   currentRole,
   currentTeacherAccount,
   onNavigate,
 }) => {
-  // Filter nilai for the active academic term
-  const termNilai = allNilai.filter((n) => n.termId === currentTerm.id);
-  const activeSantri = allSantri.filter((s) => s.status === 'Aktif');
+  // Strictly synchronize Santri with existing classes in Data Santri (allKelas)
+  const activeSantri = getAllActiveSantriInExistingKelas(allSantri, allKelas);
+  const validSantriIds = new Set(activeSantri.map((s) => s.id));
+
+  // Filter nilai for the active academic term and valid santri
+  const termNilai = allNilai.filter(
+    (n) => n.termId === currentTerm.id && validSantriIds.has(n.santriId)
+  );
 
   // Stats
   const totalSantri = activeSantri.length;
+  const totalPutra = activeSantri.filter((s) => s.jenisKelamin === 'L').length;
+  const totalPutri = activeSantri.filter((s) => s.jenisKelamin === 'P').length;
   const totalGuru = allAsatidz.length;
   const totalKelas = allKelas.length;
   const totalNilaiMasuk = termNilai.length;
@@ -77,6 +89,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       : '0.0';
 
   const mumtazCount = termNilai.filter((n) => n.predikat.includes('Mumtaz')).length;
+
+  const teacherAssignedTasks = currentTeacherAccount
+    ? allTugasMengajar.filter((t) =>
+        doesTugasBelongToAsatidz(t, currentTeacherAccount, allAsatidz)
+      )
+    : [];
 
   // Announcement State (Admin CRUD)
   const [showAddModal, setShowAddModal] = useState(false);
@@ -146,11 +164,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setShowAddModal(false);
   };
 
-  const handleDeleteAnnouncement = (id: string) => {
-    if (window.confirm('Hapus pengumuman ini?')) {
-      const updated = allPengumuman.filter((p) => p.id !== id);
-      onSavePengumuman(updated);
-    }
+  // In-app delete confirmation state
+  const [confirmDelete, setConfirmDelete] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  const handleDeleteAnnouncement = (id: string, judul?: string) => {
+    setConfirmDelete({
+      isOpen: true,
+      title: 'Hapus Pengumuman',
+      message: `Yakin ingin menghapus pengumuman ${judul ? `"${judul}"` : 'ini'}?`,
+      onConfirm: () => {
+        const updated = allPengumuman.filter((p) => p.id !== id);
+        onSavePengumuman(updated);
+      },
+    });
   };
 
   const handleTogglePin = (id: string) => {
@@ -179,39 +210,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     });
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
+    <div className="space-y-4 animate-in fade-in duration-200">
       
-      {/* Hero Card */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-800 via-emerald-700 to-teal-800 text-white shadow-md p-6 sm:p-7">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-900/60 border border-emerald-400/30 text-emerald-200 text-xs font-semibold mb-2.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Sistem Penilaian &amp; Administrasi Akademik</span>
+      {/* Compact Hero Card */}
+      <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-emerald-800 via-emerald-700 to-teal-800 text-white shadow-sm px-4 py-3.5 sm:px-5 sm:py-4">
+        <div className="relative z-10 flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-900/60 border border-emerald-400/30 text-emerald-200 text-[10px] font-semibold">
+                <Sparkles className="w-3 h-3 text-amber-300" />
+                <span>Sistem Penilaian &amp; Administrasi Akademik</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 bg-emerald-950/50 border border-emerald-500/30 px-2.5 py-0.5 rounded-md text-[10px]">
+                <Calendar className="w-3 h-3 text-amber-300" />
+                <span className="text-emerald-200">Periode:</span>
+                <span className="font-bold text-white">{currentTerm.label}</span>
+              </span>
             </div>
 
-            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2 leading-tight">
+            <h2 className="text-base sm:text-lg font-extrabold tracking-tight text-white leading-snug truncate">
               {profile.nama}
             </h2>
 
-            <p className="text-emerald-100/90 text-xs sm:text-sm leading-relaxed mb-3.5">
+            <p className="text-emerald-100/90 text-[11px] leading-snug truncate mt-0.5">
               {profile.alamat}
             </p>
-
-            <div className="inline-flex items-center gap-2 bg-emerald-950/50 backdrop-blur-xs border border-emerald-500/30 px-3 py-1.5 rounded-xl text-xs">
-              <Calendar className="w-3.5 h-3.5 text-amber-300" />
-              <span className="text-emerald-200">Periode Semester Aktif:</span>
-              <span className="font-bold text-white bg-emerald-600/80 px-2 py-0.5 rounded border border-emerald-400/40">
-                {currentTerm.label}
-              </span>
-            </div>
           </div>
 
-          <div className="hidden md:flex items-center justify-center p-2.5 rounded-2xl bg-white/10 backdrop-blur-xs border border-white/20 self-center">
+          <div className="hidden sm:flex items-center justify-center p-1.5 rounded-xl bg-white/10 border border-white/20 shrink-0">
             <img
               src={profile.logoUrl || '/logo_alhusna.jpg'}
               alt="Logo Alhusna"
-              className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover shadow-lg ring-4 ring-amber-400/80 bg-white p-1"
+              className="w-12 h-12 rounded-full object-cover shadow-sm ring-2 ring-amber-400/80 bg-white p-0.5"
               referrerPolicy="no-referrer"
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).src = '/logo_alhusna.jpg';
@@ -221,89 +251,133 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Primary Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-        
-        {/* Stat: Guru */}
-        <div className="bg-white rounded-2xl p-4.5 sm:p-5 border border-slate-200/80 shadow-xs hover:border-emerald-300 transition">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                Jumlah Guru (Asatidz)
-              </p>
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-1">
-                {totalGuru} <span className="text-xs font-normal text-slate-500">Ustadz/ah</span>
-              </h3>
+      {/* Quick Bar for Asatidz Account */}
+      {currentRole === 'asatidz' && currentTeacherAccount && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 text-xs">
+            <div className="w-8 h-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center font-bold shrink-0">
+              {currentTeacherAccount.nama.charAt(0)}
             </div>
-            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-              <GraduationCap className="w-5 h-5" />
+            <div>
+              <div className="font-bold text-emerald-950">
+                Selamat bertugas, {currentTeacherAccount.nama}
+              </div>
+              <div className="text-[11px] text-emerald-800">
+                Tugas Mengajar Anda: <strong>{teacherAssignedTasks.length} Mata Pelajaran</strong> yang telah diatur oleh Admin.
+              </div>
             </div>
           </div>
-          <div className="mt-2.5 text-xs text-emerald-700 font-medium flex items-center gap-1.5">
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Akun Asatidz Aktif</span>
+          <button
+            onClick={() => onNavigate('input_nilai')}
+            className="px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer shrink-0"
+          >
+            <ClipboardEdit className="w-3.5 h-3.5" />
+            <span>Buka Input Nilai</span>
+          </button>
+        </div>
+      )}
+
+      {/* Compact Primary Stats Grid (Diperkecil agar tidak makan tempat) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+        
+        {/* Stat: Guru */}
+        <div
+          onClick={() => currentRole === 'admin' && onNavigate('asatidz', 'akun')}
+          className={`bg-white rounded-xl p-3 border border-slate-200/80 shadow-2xs hover:border-emerald-300 transition ${
+            currentRole === 'admin' ? 'cursor-pointer' : ''
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
+                Jumlah Guru (Asatidz)
+              </p>
+              <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-0.5 tabular-nums">
+                {totalGuru} <span className="text-[11px] font-normal text-slate-500">Ustadz/ah</span>
+              </h3>
+            </div>
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+              <GraduationCap className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-1.5 text-[10px] text-emerald-700 font-medium flex items-center gap-1 truncate">
+            <CheckCircle className="w-3 h-3 text-emerald-600 shrink-0" />
+            <span className="truncate">Akun Asatidz Terdaftar</span>
           </div>
         </div>
 
-        {/* Stat: Santri */}
-        <div className="bg-white rounded-2xl p-4.5 sm:p-5 border border-slate-200/80 shadow-xs hover:border-emerald-300 transition">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+        {/* Stat: Santri (Singkron dengan Santri yang sudah diinput) */}
+        <div
+          onClick={() => onNavigate('lembaga', 'kelas')}
+          className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-2xs hover:border-emerald-300 transition cursor-pointer"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
                 Jumlah Siswa (Santri)
               </p>
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-1">
-                {totalSantri} <span className="text-xs font-normal text-slate-500">Santri</span>
+              <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-0.5 tabular-nums">
+                {totalSantri} <span className="text-[11px] font-normal text-slate-500">Santri</span>
               </h3>
             </div>
-            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-              <Users className="w-5 h-5" />
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4" />
             </div>
           </div>
-          <div className="mt-2.5 text-xs text-slate-500 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Status Aktif Mengikuti Ujian</span>
+          <div className="mt-1.5 text-[10px] text-slate-500 flex items-center gap-1.5 truncate">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+            <span className="truncate">
+              Sinkron Data Santri ({totalPutra} L / {totalPutri} P)
+            </span>
           </div>
         </div>
 
         {/* Stat: Kelas */}
-        <div className="bg-white rounded-2xl p-4.5 sm:p-5 border border-slate-200/80 shadow-xs hover:border-emerald-300 transition">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+        <div
+          onClick={() => onNavigate('lembaga', 'kelas')}
+          className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-2xs hover:border-emerald-300 transition cursor-pointer"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
                 Jumlah Kelas
               </p>
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-1">
-                {totalKelas} <span className="text-xs font-normal text-slate-500">Halaqah/Kelas</span>
+              <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 mt-0.5 tabular-nums">
+                {totalKelas} <span className="text-[11px] font-normal text-slate-500">Kelas</span>
               </h3>
             </div>
-            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-              <School className="w-5 h-5" />
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+              <School className="w-4 h-4" />
             </div>
           </div>
-          <div className="mt-2.5 text-xs text-slate-500 flex items-center gap-1.5">
-            <span>Tingkat Wustho &amp; Takhasus</span>
+          <div className="mt-1.5 text-[10px] text-slate-500 flex items-center gap-1 truncate">
+            <span className="truncate">Tingkat Kelas 1 s/d Kelas 6</span>
           </div>
         </div>
 
         {/* Stat: Nilai Terinput */}
-        <div className="bg-white rounded-2xl p-4.5 sm:p-5 border border-slate-200/80 shadow-xs hover:border-emerald-300 transition">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+        <div
+          onClick={() =>
+            currentRole === 'admin' ? onNavigate('rekapan', 'rekap_guru') : onNavigate('input_nilai')
+          }
+          className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-2xs hover:border-emerald-300 transition cursor-pointer"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
                 Nilai Terinput ({currentTerm.semester.toUpperCase()})
               </p>
-              <h3 className="text-2xl sm:text-3xl font-extrabold text-emerald-700 mt-1">
-                {totalNilaiMasuk} <span className="text-xs font-normal text-slate-500">Entri</span>
+              <h3 className="text-lg sm:text-xl font-extrabold text-emerald-700 mt-0.5 tabular-nums">
+                {totalNilaiMasuk} <span className="text-[11px] font-normal text-slate-500">Entri</span>
               </h3>
             </div>
-            <div className="w-11 h-11 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center">
-              <Award className="w-5 h-5" />
+            <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center shrink-0">
+              <Award className="w-4 h-4" />
             </div>
           </div>
-          <div className="mt-2.5 text-xs text-slate-600 flex items-center justify-between">
-            <span>Rata-rata: <strong className="text-slate-900">{averageScore}</strong></span>
-            <span className="text-emerald-700 font-semibold">{mumtazCount} Mumtaz (A)</span>
+          <div className="mt-1.5 text-[10px] text-slate-600 flex items-center justify-between gap-1 truncate">
+            <span>Rata: <strong className="text-slate-900">{averageScore}</strong></span>
+            <span className="text-emerald-700 font-semibold">{mumtazCount} Mumtaz</span>
           </div>
         </div>
 
@@ -320,7 +394,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <div>
               <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
-                <span>Papan Pengumuman &amp; Informasi Akademik</span>
+                <span>PAPAN PENGUMUMAN</span>
                 <span className="text-[11px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
                   {allPengumuman.length} Pesan
                 </span>
@@ -438,7 +512,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => handleDeleteAnnouncement(item.id)}
+                          onClick={() => handleDeleteAnnouncement(item.id, item.judul)}
                           title="Hapus Pengumuman"
                           className="p-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 hover:text-rose-700 hover:bg-rose-50 transition text-xs"
                         >
@@ -454,80 +528,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Progress per Kelas List */}
-      <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200/80 shadow-xs">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Layers className="w-5 h-5 text-emerald-600" />
-              <span>Status Kelengkapan Nilai Per Kelas ({currentTerm.label})</span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Pantau kelengkapan nilai santri pada masing-masing kelas
-            </p>
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {allKelas.map((kelas) => {
-            const santriInKelas = allSantri.filter(
-              (s) => s.kelasId === kelas.id && s.status === 'Aktif'
-            );
-            const gradesInKelas = termNilai.filter((n) => n.kelasId === kelas.id);
-            const totalStudents = santriInKelas.length;
-            const gradedStudentsCount = new Set(gradesInKelas.map((g) => g.santriId)).size;
-            const percent =
-              totalStudents > 0
-                ? Math.min(100, Math.round((gradedStudentsCount / totalStudents) * 100))
-                : 0;
-
-            return (
-              <div
-                key={kelas.id}
-                className="p-4 rounded-xl border border-slate-200/80 bg-slate-50/60 hover:bg-slate-50 transition flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-bold text-sm text-slate-900">{kelas.nama}</span>
-                    <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
-                      {percent}%
-                    </span>
-                  </div>
-
-                  <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden mb-2">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        percent === 100
-                          ? 'bg-emerald-600'
-                          : percent > 50
-                          ? 'bg-emerald-500'
-                          : percent > 0
-                          ? 'bg-amber-500'
-                          : 'bg-slate-300'
-                      }`}
-                      style={{ width: `${percent}%` }}
-                    />
-                  </div>
-
-                  <div className="text-xs text-slate-500 flex items-center justify-between">
-                    <span>{gradedStudentsCount} / {totalStudents} Santri Dinilai</span>
-                    <span>Wali: {kelas.waliKelas || '-'}</span>
-                  </div>
-                </div>
-
-                <div className="mt-3 pt-2.5 border-t border-slate-200/60 flex justify-end">
-                  <button
-                    onClick={() => onNavigate('asatidz')}
-                    className="text-xs text-emerald-700 hover:text-emerald-800 font-bold hover:underline"
-                  >
-                    Buka Lembar Nilai →
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
 
       {/* ============================================================ */}
       {/* MODAL: TAMBAH / EDIT PENGUMUMAN */}
@@ -640,6 +641,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* In-app deletion confirmation modal */}
+      <ConfirmModal
+        isOpen={!!confirmDelete?.isOpen}
+        title={confirmDelete?.title}
+        message={confirmDelete?.message || ''}
+        onConfirm={() => {
+          if (confirmDelete?.onConfirm) {
+            confirmDelete.onConfirm();
+          }
+          setConfirmDelete(null);
+        }}
+        onCancel={() => setConfirmDelete(null)}
+      />
 
     </div>
   );
